@@ -107,6 +107,25 @@ model UsageRecord {
   notes          String?
 }
 
+model UsageEvent {
+  id             String   @id @default(uuid())
+  organizationId String
+  subscriptionId String?
+  userId         String?
+  jobId          String?
+  eventType      String   @default("AI_GENERATION")
+  tokensUsed     Int      @default(0)
+  storageBytes   Int      @default(0)
+  generationMs   Int      @default(0)
+  jobsExecuted   Int      @default(1)
+  rawPayload     Json?
+  aggregated     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, aggregated, createdAt])
+  @@index([subscriptionId, aggregated])
+}
+
 enum AiGenerationType {
   BLOG_CONTENT
   BLOG_HERO

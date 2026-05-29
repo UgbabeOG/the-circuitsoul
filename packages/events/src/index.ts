@@ -1,11 +1,33 @@
 import { EventEmitter } from 'events';
-import { Queue, Worker, Job, QueueScheduler, ConnectionOptions, JobsOptions } from 'bullmq';
+import { Queue, Worker, Job, QueueScheduler, ConnectionOptions, JobsOptions, WorkerOptions } from 'bullmq';
 import { Events, PayloadFor, isAIGenerationV1 } from './registry';
 
 export const AI_GENERATION_QUEUE_NAME = 'ai-generation';
 export const AI_GENERATION_DLQ_NAME = 'ai-generation-dlq';
+export const USAGE_AGGREGATION_QUEUE_NAME = 'usage-aggregation';
 
 export type AIGenerationJobData = PayloadFor<'ai-generation.v1'>;
+
+// ─── Worker Configuration ─────────────────────────────────────────────────────
+
+export interface WorkerConfig {
+  /** Number of concurrent jobs this worker processes. Default: 5 */
+  concurrency?: number;
+
+  /** BullMQ rate limiter — max N jobs per duration (ms) */
+  limiter?: {
+    max: number;
+    duration: number;
+  };
+
+  /** How long a job can hold its lock before being considered stalled (ms) */
+  lockDuration?: number;
+
+  /** How often to check for stalled jobs (ms) */
+  stalledInterval?: number;
+}
+
+// ─── Redis Connection ─────────────────────────────────────────────────────────
 
 const defaultRedisConnection = (): ConnectionOptions => {
   if (process.env.REDIS_URL) {
@@ -18,9 +40,13 @@ const defaultRedisConnection = (): ConnectionOptions => {
   };
 };
 
+// ─── EventBus ─────────────────────────────────────────────────────────────────
+
 export class EventBus extends EventEmitter {}
 
 export const eventBus = new EventBus();
+
+// ─── Queue Factories ──────────────────────────────────────────────────────────
 
 export function createQueue<T = unknown>(queueName: string, connection: ConnectionOptions = defaultRedisConnection()) {
   new QueueScheduler(queueName, { connection });
@@ -35,6 +61,12 @@ export function createAIGenerationQueue(connection: ConnectionOptions = defaultR
   return createQueue<AIGenerationJobData>(AI_GENERATION_QUEUE_NAME, connection);
 }
 
+export function createUsageAggregationQueue(connection: ConnectionOptions = defaultRedisConnection()) {
+  return createQueue<any>(USAGE_AGGREGATION_QUEUE_NAME, connection);
+}
+
+// ─── Job Options ──────────────────────────────────────────────────────────────
+
 const defaultJobOptions: JobsOptions = {
   attempts: 5,
   backoff: {
@@ -44,6 +76,8 @@ const defaultJobOptions: JobsOptions = {
   removeOnComplete: true,
   removeOnFail: false
 };
+
+// ─── Enqueue ──────────────────────────────────────────────────────────────────
 
 export async function enqueueAIGenerationJob(
   data: AIGenerationJobData,
@@ -58,10 +92,32 @@ export async function enqueueAIGenerationJob(
   await queue.add('ai-generation-request', data, { ...defaultJobOptions, ...opts });
 }
 
+// ─── Worker Factory ───────────────────────────────────────────────────────────
+
+/**
+ * Create a BullMQ worker for AI generation jobs with configurable concurrency.
+ *
+ * @param processor - The job processing callback
+ * @param connection - Redis connection options
+ * @param config - Worker configuration (concurrency, limiter, etc.)
+ */
 export function createAIGenerationWorker(
   processor: (job: Job<AIGenerationJobData>) => Promise<void>,
-  connection: ConnectionOptions = defaultRedisConnection()
+  connection: ConnectionOptions = defaultRedisConnection(),
+  config: WorkerConfig = {}
 ) {
+  const workerOptions: Partial<WorkerOptions> = {
+    connection,
+    concurrency: config.concurrency ?? 5,
+    lockDuration: config.lockDuration,
+    stalledInterval: config.stalledInterval,
+    limiter: config.limiter
+  };
+
   // Worker will rely on the processor to handle idempotency and logging.
-  return new Worker<AIGenerationJobData>(AI_GENERATION_QUEUE_NAME, processor, { connection });
+  return new Worker<AIGenerationJobData>(
+    AI_GENERATION_QUEUE_NAME,
+    processor,
+    workerOptions as WorkerOptions
+  );
 }
