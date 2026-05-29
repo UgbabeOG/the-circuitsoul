@@ -1,0 +1,22 @@
+# CircuitSoul OSS Services Configuration Env
+# Keep this file out of source control in production environments
+
+# n8n configs
+N8N_ENCRYPTION_KEY=super-secret-key-change-in-prod
+N8N_API_KEY=cs_n8n_flow_secret_key_84920
+N8N_BASIC_AUTH_ACTIVE=true
+N8N_BASIC_AUTH_USER=admin
+N8N_BASIC_AUTH_PASSWORD=circuitsoul-super-secure-pw-2026
+
+# Ghost configs
+GHOST_URL=http://ghost:2368
+GHOST_DB_PASSWORD=ghost_db_pass_9203
+GHOST_ADMIN_API_KEY=65f12ab3490bcfc7890def12:abcdef0123456789012345678901234567890123456789012345678901234567
+
+# Wazuh configs
+WAZUH_USER=admin
+WAZUH_PASSWORD=Wazuh-Admin-Password-CS-2026!
+WAZUH_API_URL=https://wazuh:55000
+
+# Prometheus configs
+PROMETHEUS_API_URL=http://prometheus:9090

@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # n8n - Automation Flow Engine
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: circuitsoul-flow-n8n
+    restart: unless-stopped
+    networks:
+      - circuitsoul-net
+    env_file:
+      - ../configs/docker-env
+    volumes:
+      - n8n_data:/home/node/.n8n
+    # Exposing ports only internally to the network, no host port mapping to block external traffic
+
+  # Ghost - Blog Engine
+  ghost:
+    image: ghost:5-alpine
+    container_name: circuitsoul-blog-ghost
+    restart: unless-stopped
+    networks:
+      - circuitsoul-net
+    env_file:
+      - ../configs/docker-env
+    volumes:
+      - ghost_data:/var/lib/ghost/content
+
+  # Wazuh - Security & Threat Manager
+  wazuh:
+    image: wazuh/wazuh-odfe:4.3.10
+    container_name: circuitsoul-shield-wazuh
+    restart: unless-stopped
+    networks:
+      - circuitsoul-net
+    env_file:
+      - ../configs/docker-env
+    volumes:
+      - wazuh_data:/var/ossec/data
+
+  # Prometheus - Ops monitoring engine
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: circuitsoul-ops-prometheus
+    restart: unless-stopped
+    networks:
+      - circuitsoul-net
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+networks:
+  circuitsoul-net:
+    driver: bridge
+    internal: true # Sets the network as internal, completely isolating the services from direct public access
+
+volumes:
+  n8n_data:
+  ghost_data:
+  wazuh_data:
+  prometheus_data:
