@@ -69,6 +69,12 @@ importers:
       '@circuitsoul/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@circuitsoul/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@circuitsoul/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@circuitsoul/ui':
         specifier: workspace:*
         version: link:../../packages/ui

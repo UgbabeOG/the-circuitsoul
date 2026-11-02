@@ -16,3 +16,5 @@ export { PrometheusAdapter } from './prometheus';
 export { GhostAdapter } from './ghost';
 export type { N8nWorkflowTemplate } from './mocks/n8n.mock';
 export { CURATED_AUTOMATION_TEMPLATES } from './mocks/n8n.mock';
+export type { GhostPost, AfricanTechTrend } from './mocks/ghost.mock';
+export { CURATED_AFRICAN_TECH_TRENDS } from './mocks/ghost.mock';
