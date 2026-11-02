@@ -18,6 +18,7 @@ import {
   requireRole,
   requireSession,
   signSessionToken,
+  switchOrganization,
   verifySessionToken
 } from './index.ts';
 
@@ -60,24 +61,27 @@ test('valid signed session cookies still verify and carry org context', () => {
   assert.equal(parsed?.role, Role.OWNER);
 });
 
-test('explicit org override is accepted for org switching but still validated by membership checks', () => {
-  const session = {
-    userId: 'user-456',
-    email: 'owner@example.com',
-    orgId: 'org-tenant-b',
-    role: Role.OWNER
-  };
+test('switchOrganization verifies DB membership before allowing org switch', async () => {
+  const originalFindUnique = prisma.membership.findUnique.bind(prisma.membership);
 
-  const token = signSessionToken(session);
-  const parsed = parseSession({
-    cookie: `circuitsoul_session=${encodeURIComponent(token)}`,
-    'x-circuitsoul-org-id': 'org-tenant-c'
-  });
+  try {
+    // User is a member of org-tenant-d with ADMIN role
+    prisma.membership.findUnique = async () =>
+      ({ id: 'm-1', organizationId: 'org-tenant-d', role: Role.ADMIN } as any);
 
-  assert.ok(parsed);
-  assert.equal(parsed?.userId, 'user-456');
-  assert.equal(parsed?.orgId, 'org-tenant-c');
-  assert.equal(parsed?.role, Role.OWNER);
+    const role = await switchOrganization('user-999', 'org-tenant-d');
+    assert.equal(role, Role.ADMIN);
+
+    // User is not a member of org-unknown
+    prisma.membership.findUnique = async () => null;
+
+    await assert.rejects(
+      () => switchOrganization('user-999', 'org-unknown'),
+      /TenantAccessDenied/
+    );
+  } finally {
+    prisma.membership.findUnique = originalFindUnique;
+  }
 });
 
 test('role checks reject unauthorized sessions and accept valid membership', () => {

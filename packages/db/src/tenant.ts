@@ -44,19 +44,16 @@ export async function resolveActiveOrganization(
     throw new Error('TenantAccessDenied: No active user session.');
   }
 
+  if (!requestedOrganizationId) {
+    throw new Error('TenantAccessDenied: Organization ID must be explicitly provided for org switching.');
+  }
+
   const memberships = await listUserOrganizations(userId);
   if (!memberships.length) {
     throw new Error('TenantAccessDenied: User has no active organization memberships.');
   }
 
-  const fallbackOrganizationId = memberships[0]?.organizationId;
-  const organizationId = requestedOrganizationId || fallbackOrganizationId;
-
-  if (!organizationId) {
-    throw new Error('TenantAccessDenied: No active organization session.');
-  }
-
-  const membership = memberships.find((entry) => entry.organizationId === organizationId);
+  const membership = memberships.find((entry) => entry.organizationId === requestedOrganizationId);
   if (!membership) {
     throw new Error('TenantAccessDenied: Requested organization is not available to this user.');
   }

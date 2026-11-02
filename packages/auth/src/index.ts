@@ -199,22 +199,17 @@ export function verifySessionToken(token: string): UserSession | null {
 /**
  * Parses user session from request headers and cookies.
  * Strictly verifies signatures. In production, never falls back to mock sessions.
+ * Organization ID comes only from the verified session token — never from
+ * client-supplied headers. Org switching must go through resolveActiveOrganization
+ * which verifies DB membership.
  */
 export function parseSession(headers: Record<string, string | undefined>): UserSession | null {
-  const overrideOrgId = headers['x-circuitsoul-org-id'] || headers['X-CircuitSoul-Org-Id'];
-
-  const applyOrgOverride = (session: UserSession): UserSession => {
-    if (!overrideOrgId) return session;
-    const sanitizedOrgId = overrideOrgId.trim();
-    return sanitizedOrgId ? { ...session, orgId: sanitizedOrgId } : session;
-  };
-
-  // 1. Check Authorization ******
+  // 1. Check Authorization Bearer token
   const authHeader = headers['authorization'] || headers['Authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.replace('Bearer ', '').trim();
     const verified = parseProviderToken(token);
-    if (verified) return applyOrgOverride(verified);
+    if (verified) return verified;
   }
 
   // 2. Check Cookie: circuitsoul_session
@@ -224,7 +219,7 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
     if (match && match[1]) {
       const decoded = decodeURIComponent(match[1]);
       const verified = parseProviderToken(decoded);
-      if (verified) return applyOrgOverride(verified);
+      if (verified) return verified;
     }
   }
 
@@ -234,7 +229,7 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
     // If it's a signed token
     if (customHeader.includes('.')) {
       const verified = parseProviderToken(customHeader);
-      if (verified) return applyOrgOverride(verified);
+      if (verified) return verified;
     }
   }
 
@@ -244,7 +239,7 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
       userId: 'user-dev-uuid-001',
       email: 'dev@circuitsoul.com',
       name: 'Developer Admin (SME Owner)',
-      orgId: overrideOrgId ? overrideOrgId.trim() || 'org-dev-uuid-100' : 'org-dev-uuid-100',
+      orgId: 'org-dev-uuid-100',
       role: Role.OWNER
     };
   }
@@ -286,6 +281,19 @@ export async function verifyOrgMembership(userId: string, organizationId: string
   }
 
   return membership.role;
+}
+
+/**
+ * Switches the active organization for a verified user.
+ * Verifies DB membership before allowing the switch — never trusts client-supplied org IDs.
+ * Returns the user's role in the target organization. Caller is responsible for
+ * issuing a new session token with the switched organization context.
+ */
+export async function switchOrganization(
+  userId: string,
+  organizationId: string
+): Promise<Role> {
+  return verifyOrgMembership(userId, organizationId);
 }
 
 /**

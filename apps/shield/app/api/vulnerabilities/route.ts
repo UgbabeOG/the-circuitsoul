@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedOrg } from '@circuitsoul/auth';
 import { shieldAdapter } from '@circuitsoul/api-adapters';
-import { evaluateNDPRCompliance } from '@circuitsoul/security';
+import { prisma } from '@circuitsoul/db';
 import { z } from 'zod';
 
 const NdpRConfigSchema = z.object({
@@ -16,6 +16,30 @@ const NdpRConfigSchema = z.object({
   thirdPartyDataContractsSigned: z.boolean().default(false)
 });
 
+const ScanRequestSchema = z.object({
+  agentId: z.string().min(1),
+  assetId: z.string().uuid().optional()
+});
+
+async function authorizeAssetAccess(
+  organizationId: string,
+  assetId?: string
+) {
+  if (!assetId) {
+    throw new Error('Asset authorization required: assetId must be provided for scan operations.');
+  }
+
+  const asset = await prisma.asset.findFirst({
+    where: { id: assetId, organizationId, isAuthorized: true }
+  });
+
+  if (!asset) {
+    throw new Error('Asset not found or not authorized for scanning by this organization.');
+  }
+
+  return asset;
+}
+
 export async function GET(request: Request) {
   try {
     const { session } = await requireAuthenticatedOrg(
@@ -24,6 +48,12 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const agentId = searchParams.get('agentId') || 'agent-001';
+    const assetId = searchParams.get('assetId') || undefined;
+
+    // Require asset authorization before exposing vulnerability data
+    if (assetId) {
+      await authorizeAssetAccess(session.orgId, assetId);
+    }
 
     const data = await shieldAdapter.getVulnerabilities(agentId);
 
@@ -52,14 +82,37 @@ export async function POST(request: Request) {
       Object.fromEntries(request.headers.entries())
     );
     const body = await request.json();
-    const { agentId = 'agent-001' } = body;
 
-    const result = await shieldAdapter.triggerScan(agentId);
+    const parsed = ScanRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: parsed.error.issues[0]?.message || 'Invalid scan request' },
+        { status: 400 }
+      );
+    }
+
+    // Require explicit asset authorization before triggering any scan
+    const asset = await authorizeAssetAccess(session.orgId, parsed.data.assetId);
+
+    const result = await shieldAdapter.triggerScan(parsed.data.agentId);
+
+    // Record the scan in the assessment history
+    await prisma.shieldAssessment.create({
+      data: {
+        organizationId: session.orgId,
+        assetId: asset.id,
+        status: 'PENDING',
+        score: 0,
+        overallRisk: 'UNKNOWN',
+        isVerifiedTechnical: false
+      }
+    });
 
     return NextResponse.json({
       success: true,
       data: result,
-      organizationId: session.orgId
+      organizationId: session.orgId,
+      assetId: asset.id
     });
   } catch (error: any) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {
