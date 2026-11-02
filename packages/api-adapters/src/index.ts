@@ -14,3 +14,5 @@ export { N8nAdapter } from './n8n';
 export { WazuhAdapter } from './wazuh';
 export { PrometheusAdapter } from './prometheus';
 export { GhostAdapter } from './ghost';
+export type { N8nWorkflowTemplate } from './mocks/n8n.mock';
+export { CURATED_AUTOMATION_TEMPLATES } from './mocks/n8n.mock';

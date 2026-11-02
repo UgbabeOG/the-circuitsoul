@@ -14,7 +14,9 @@
     "lucide-react": "^0.344.0",
     "@circuitsoul/ui": "workspace:*",
     "@circuitsoul/auth": "workspace:*",
-    "@circuitsoul/api-adapters": "workspace:*"
+    "@circuitsoul/api-adapters": "workspace:*",
+    "@circuitsoul/db": "workspace:*",
+    "@circuitsoul/shared-types": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
