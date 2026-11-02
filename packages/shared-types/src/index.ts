@@ -81,6 +81,60 @@ export const BlogPostSchema = z.object({
   status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).default('DRAFT')
 });
 
+export const AssetTypeSchema = z.enum([
+  'DOMAIN',
+  'IP_ADDRESS',
+  'WEB_APP',
+  'DATABASE',
+  'CLOUD_STORAGE'
+]);
+
+export const AssetSchema = z.object({
+  id: z.string().uuid().optional(),
+  organizationId: z.string().uuid().optional(),
+  name: z.string().min(2),
+  type: AssetTypeSchema.default('DOMAIN'),
+  target: z.string().min(3),
+  isAuthorized: z.boolean().default(true),
+  verified: z.boolean().default(false)
+});
+
+export const ScanRequestSchema = z.object({
+  assetId: z.string().optional(),
+  target: z.string().min(3),
+  isAuthorized: z.boolean().refine(val => val === true, {
+    message: 'Explicit customer authorization is strictly required before initiating a security scan.'
+  }),
+  scanType: z.enum(['CONTAINER_VULNERABILITY', 'PORT_AUDIT', 'SSL_TLS_CHECK']).default('CONTAINER_VULNERABILITY')
+});
+
+export const NDPRAssessmentInputSchema = z.object({
+  organizationName: z.string().min(2),
+  dbHostingRegion: z.string().min(2),
+  isDataInAdequacyZone: z.boolean().default(true),
+  encryptionAtRestEnabled: z.boolean().default(true),
+  encryptionInTransitEnabled: z.boolean().default(true),
+  consentLoggingActive: z.boolean().default(true),
+  dataRetentionDays: z.number().int().min(1).max(3650),
+  privacyPolicyPublished: z.boolean().default(true),
+  dpoDesignated: z.boolean().default(false),
+  breachNotificationProcessReady: z.boolean().default(false),
+  thirdPartyDataContractsSigned: z.boolean().default(false)
+});
+
+export const SecurityConsultingRequestSchema = z.object({
+  contactName: z.string().min(2),
+  contactEmail: z.string().email(),
+  contactPhone: z.string().optional(),
+  scope: z.enum([
+    'PENETRATION_TESTING',
+    'NDPR_AUDIT_ASSISTANCE',
+    'CLOUD_HARDENING',
+    'INCIDENT_RESPONSE'
+  ]),
+  notes: z.string().optional()
+});
+
 export type UserDTO = z.infer<typeof UserSchema>;
 export type OrganizationDTO = z.infer<typeof OrganizationSchema>;
 export type ShieldAssessmentDTO = z.infer<typeof ShieldAssessmentSchema>;
@@ -90,4 +144,8 @@ export type AutomationCategory = z.infer<typeof AutomationCategorySchema>;
 export type AutomationTemplate = z.infer<typeof AutomationTemplateSchema>;
 export type WorkflowExecutionRequest = z.infer<typeof WorkflowExecutionRequestSchema>;
 export type BlogPostDTO = z.infer<typeof BlogPostSchema>;
+export type AssetDTO = z.infer<typeof AssetSchema>;
+export type ScanRequest = z.infer<typeof ScanRequestSchema>;
+export type NDPRAssessmentInput = z.infer<typeof NDPRAssessmentInputSchema>;
+export type SecurityConsultingRequestDTO = z.infer<typeof SecurityConsultingRequestSchema>;
 

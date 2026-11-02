@@ -1,26 +1,19 @@
 import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
-import { prisma } from '@circuitsoul/db';
-import { parseSession } from '@circuitsoul/auth';
+import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
+import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
 
 export async function GET(request: Request) {
   try {
-    const session = parseSession(Object.fromEntries(request.headers.entries()));
+    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
+    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
     const workflows = await flowAdapter.getWorkflows();
     const templates = flowAdapter.getTemplates();
 
-    // Try to enrich with database workflows if available
-    let dbWorkflows: any[] = [];
-    try {
-      if (session?.orgId) {
-        dbWorkflows = await prisma.flowWorkflow.findMany({
-          where: { organizationId: session.orgId },
-          include: { executions: { take: 5, orderBy: { startedAt: 'desc' } } }
-        });
-      }
-    } catch {
-      // Prisma DB might not be seeded in mock/dev mode, continue gracefully
-    }
+    const dbWorkflows = await prisma.flowWorkflow.findMany({
+      where: { organizationId: session.orgId },
+      include: { executions: { take: 5, orderBy: { startedAt: 'desc' } } }
+    });
 
     return NextResponse.json({
       success: true,
@@ -30,6 +23,13 @@ export async function GET(request: Request) {
       count: workflows.length
     });
   } catch (error: any) {
+    if (error instanceof Error && error.message.startsWith('Unauthorized')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to fetch workflows' },
       { status: 500 }
@@ -39,7 +39,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = parseSession(Object.fromEntries(request.headers.entries()));
+    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.MANAGE_WORKFLOWS);
+    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
     const body = await request.json();
 
     if (!body.name) {
@@ -49,7 +50,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Provision workflow via n8n adapter
     const newWorkflow = await flowAdapter.createWorkflow({
       name: body.name,
       description: body.description,
@@ -58,24 +58,16 @@ export async function POST(request: Request) {
       triggerType: body.triggerType
     });
 
-    // Attempt to persist in Prisma if organization exists
-    let dbRecord = null;
-    try {
-      if (session?.orgId) {
-        dbRecord = await prisma.flowWorkflow.create({
-          data: {
-            organizationId: session.orgId,
-            name: body.name,
-            description: body.description || null,
-            status: 'ACTIVE',
-            triggerType: body.triggerType || 'Manual',
-            definitionJson: JSON.stringify(body.nodes || [])
-          }
-        });
+    const dbRecord = await prisma.flowWorkflow.create({
+      data: {
+        organizationId: session.orgId,
+        name: body.name,
+        description: body.description || null,
+        status: 'ACTIVE',
+        triggerType: body.triggerType || 'Manual',
+        definitionJson: JSON.stringify(body.nodes || [])
       }
-    } catch {
-      // Dev/mock mode fallback
-    }
+    });
 
     return NextResponse.json({
       success: true,
@@ -83,6 +75,13 @@ export async function POST(request: Request) {
       dbRecord
     });
   } catch (error: any) {
+    if (error instanceof Error && error.message.startsWith('Unauthorized')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to create workflow' },
       { status: 500 }

@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { blogAdapter } from '@circuitsoul/api-adapters';
-import { prisma } from '@circuitsoul/db';
-import { parseSession } from '@circuitsoul/auth';
+import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
+import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
 
 export async function POST(request: Request) {
   try {
-    const session = parseSession(Object.fromEntries(request.headers.entries()));
+    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.PUBLISH_CONTENT);
+    await assertOrganizationMembership(session.userId, session.orgId, [Role.ADMIN, Role.OWNER]);
     const body = await request.json();
     const { title, content, excerpt, status = 'published', tags, feature_image } = body;
 
@@ -16,7 +17,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Convert Markdown/text to HTML for Ghost Admin API
     const formattedHtml = content.startsWith('<')
       ? content
       : `<div class="circuitsoul-article">${content
@@ -29,7 +29,6 @@ export async function POST(request: Request) {
           })
           .join('')}</div>`;
 
-    // Publish or stage through Ghost API Adapter
     const ghostPost = await blogAdapter.createPost({
       title,
       html: formattedHtml,
@@ -39,48 +38,45 @@ export async function POST(request: Request) {
       feature_image
     });
 
-    // Record billing usage
-    try {
-      if (session?.orgId) {
-        await prisma.usageEvent.create({
-          data: {
-            organizationId: session.orgId,
-            userId: session.userId,
-            eventType: 'BLOG_PUBLICATION',
-            jobsExecuted: 1,
-            generationMs: 650,
-            rawPayload: {
-              ghostId: ghostPost.id,
-              status: ghostPost.status,
-              slug: ghostPost.slug
-            }
-          }
-        });
+    await prisma.usageEvent.create({
+      data: {
+        organizationId: session.orgId,
+        userId: session.userId,
+        eventType: 'BLOG_PUBLICATION',
+        jobsExecuted: 1,
+        generationMs: 650,
+        rawPayload: {
+          ghostId: ghostPost.id,
+          status: ghostPost.status,
+          slug: ghostPost.slug
+        }
       }
-    } catch {
-      // Dev/mock mode fallback
-    }
+    });
 
-    // Update status in Prisma DB
-    try {
-      if (session?.userId) {
-        await prisma.blogPost.updateMany({
-          where: { title, authorId: session.userId },
-          data: {
-            status: status === 'published' ? 'PUBLISHED' : 'DRAFT',
-            content
-          }
-        });
+    await prisma.blogPost.updateMany({
+      where: {
+        title,
+        authorId: session.userId,
+        organizationId: session.orgId
+      },
+      data: {
+        status: status === 'published' ? 'PUBLISHED' : 'DRAFT',
+        content
       }
-    } catch {
-      // Dev/mock mode fallback
-    }
+    });
 
     return NextResponse.json({
       success: true,
       post: ghostPost
     });
   } catch (error: any) {
+    if (error instanceof Error && error.message.startsWith('Unauthorized')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: error.message || 'Publishing to Ghost failed' },
       { status: 500 }

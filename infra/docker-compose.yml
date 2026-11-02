@@ -1,24 +1,68 @@
 version: '3.8'
 
 services:
+  # Primary PostgreSQL Database for CircuitSoul multi-tenant platform
+  postgres:
+    image: postgres:16-alpine
+    container_name: circuitsoul-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-circuitsoul}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-circuitsoul_dev_password_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-circuitsoul_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-circuitsoul} -d $${POSTGRES_DB:-circuitsoul_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - circuitsoul-net
+
+  # Redis for BullMQ AI generation, usage aggregation, and event queues
+  redis:
+    image: redis:7-alpine
+    container_name: circuitsoul-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - circuitsoul-net
+
   # n8n - Automation Flow Engine
   n8n:
     image: n8nio/n8n:latest
     container_name: circuitsoul-flow-n8n
     restart: unless-stopped
+    ports:
+      - "5678:5678"
     networks:
       - circuitsoul-net
     env_file:
       - ../configs/docker-env
     volumes:
       - n8n_data:/home/node/.n8n
-    # Exposing ports only internally to the network, no host port mapping to block external traffic
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Ghost - Blog Engine
   ghost:
     image: ghost:5-alpine
     container_name: circuitsoul-blog-ghost
     restart: unless-stopped
+    ports:
+      - "2368:2368"
     networks:
       - circuitsoul-net
     env_file:
@@ -31,6 +75,8 @@ services:
     image: wazuh/wazuh-odfe:4.3.10
     container_name: circuitsoul-shield-wazuh
     restart: unless-stopped
+    ports:
+      - "55000:55000"
     networks:
       - circuitsoul-net
     env_file:
@@ -43,6 +89,8 @@ services:
     image: prom/prometheus:latest
     container_name: circuitsoul-ops-prometheus
     restart: unless-stopped
+    ports:
+      - "9090:9090"
     networks:
       - circuitsoul-net
     volumes:
@@ -52,9 +100,10 @@ services:
 networks:
   circuitsoul-net:
     driver: bridge
-    internal: true # Sets the network as internal, completely isolating the services from direct public access
 
 volumes:
+  postgres_data:
+  redis_data:
   n8n_data:
   ghost_data:
   wazuh_data:

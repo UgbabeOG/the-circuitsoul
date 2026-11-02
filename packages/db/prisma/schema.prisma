@@ -39,6 +39,12 @@ enum FlowStatus {
   INACTIVE
 }
 
+enum AssessmentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 enum ExecutionStatus {
   RUNNING
   SUCCESS
@@ -152,23 +158,37 @@ model User {
   blogPosts     BlogPost[]
   activityLogs  ActivityLog[]
   subscriptions Subscription[]
+  shieldAssessmentsCreated ShieldAssessment[] @relation("CreatedShieldAssessment")
+  aiGenerationsByUser AiGeneration[] @relation("AiGenerationByUser")
+}
+
+enum AssetType {
+  DOMAIN
+  IP_ADDRESS
+  WEB_APP
+  DATABASE
+  CLOUD_STORAGE
 }
 
 model Organization {
-  id            String             @id @default(uuid())
-  name          String
-  slug          String             @unique
-  logoUrl       String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  memberships   Membership[]
-  assessments   ShieldAssessment[]
-  environments  CloudEnvironment[]
-  workflows     FlowWorkflow[]
-  aiGenerations AiGeneration[]
-  notifications Notification[]
-  activityLogs  ActivityLog[]
-  subscriptions Subscription[]
+  id                 String                      @id @default(uuid())
+  name               String
+  slug               String                      @unique
+  logoUrl            String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+  memberships        Membership[]
+  assessments        ShieldAssessment[]
+  assets             Asset[]
+  ndprAssessments    NDPRAssessment[]
+  consultingRequests SecurityConsultingRequest[]
+  environments       CloudEnvironment[]
+  workflows          FlowWorkflow[]
+  aiGenerations      AiGeneration[]
+  notifications      Notification[]
+  activityLogs       ActivityLog[]
+  subscriptions      Subscription[]
+  blogPosts          BlogPost[]
 }
 
 model Membership {
@@ -184,17 +204,73 @@ model Membership {
   @@unique([userId, organizationId])
 }
 
-model ShieldAssessment {
-  id             String               @id @default(uuid())
+model Asset {
+  id             String             @id @default(uuid())
   organizationId String
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  status         String               // "PENDING" | "COMPLETED" | "FAILED"
-  score          Int                  // Overall score out of 100
-  overallRisk    String               // "LOW" | "MEDIUM" | "HIGH"
-  vulnerabilities ShieldVulnerability[]
-  createdById    String?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  type           AssetType          @default(DOMAIN)
+  target         String             // e.g. "api.startup.ng" or "197.210.64.12"
+  isAuthorized   Boolean            @default(true) // explicit SME owner authorization
+  verified       Boolean            @default(false)
+  lastScannedAt  DateTime?
+  assessments    ShieldAssessment[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([organizationId, target])
+}
+
+model ShieldAssessment {
+  id                  String                @id @default(uuid())
+  organizationId      String
+  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assetId             String?
+  asset               Asset?                @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  status              AssessmentStatus      @default(PENDING)
+  score               Int                   // Overall score out of 100
+  overallRisk         String                // "LOW" | "MEDIUM" | "HIGH"
+  isVerifiedTechnical Boolean               @default(false)
+  reportPdfUrl        String?
+  vulnerabilities     ShieldVulnerability[]
+  createdById         String?
+  createdBy           User?                 @relation("CreatedShieldAssessment", fields: [createdById], references: [id])
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([organizationId, createdAt])
+}
+
+model NDPRAssessment {
+  id               String       @id @default(uuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  score            Int          // 0-100
+  compliant        Boolean      @default(false)
+  answersJson      String       // JSON string of 20 statutory questions across the 4 pillars
+  reportPdfUrl     String?
+  remediationsJson String?
+  conductedBy      String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([organizationId, createdAt])
+}
+
+model SecurityConsultingRequest {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactName    String
+  contactEmail   String
+  contactPhone   String?
+  scope          String       // "PENETRATION_TESTING" | "NDPR_AUDIT_ASSISTANCE" | "CLOUD_HARDENING" | "INCIDENT_RESPONSE"
+  notes          String?
+  status         String       @default("PENDING") // PENDING, CONTACTED, ENGAGED, COMPLETED
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, status])
 }
 
 model ShieldVulnerability {
@@ -210,14 +286,22 @@ model ShieldVulnerability {
   updatedAt    DateTime           @updatedAt
 }
 
+enum CloudEnvironmentStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
 model CloudEnvironment {
   id             String           @id @default(uuid())
   organizationId String
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   provider       CloudProvider
   name           String
-  credentialsJson String          // Encrypted API keys/credentials
-  status         String           // "CONNECTED" | "DISCONNECTED" | "ERROR"
+  credentialsJson String          // Plaintext credentials - to be migrated to encrypted fields
+  credentialsEncrypted String?  // Encrypted API keys/credentials (AES-256-GCM)
+  credentialsIv    String?        // Initialization vector for credential decryption
+  status         CloudEnvironmentStatus @default(CONNECTED)
   score          Int              // Cloud health score
   costMonthly    Decimal          @db.Decimal(12, 2)
   metrics        CloudMetric[]
@@ -236,17 +320,20 @@ model CloudMetric {
 }
 
 model FlowWorkflow {
-  id             String          @id @default(uuid())
-  organizationId String
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String
-  description    String?
-  status         FlowStatus      @default(DRAFT)
-  triggerType    String
-  definitionJson String          // Dynamic workflow node configuration
-  executions     FlowExecution[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id                 String          @id @default(uuid())
+  organizationId     String
+  organization       Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?
+  status             FlowStatus      @default(DRAFT)
+  triggerType        String
+  definitionJson     String          // Dynamic workflow node configuration
+  externalWorkflowId String?         // ID of the mapped workflow in n8n engine
+  executions         FlowExecution[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([organizationId, status])
 }
 
 model FlowExecution {
@@ -257,22 +344,28 @@ model FlowExecution {
   startedAt  DateTime        @default(now())
   completedAt DateTime?
   logsJson   String?         // Run traces & errors
+
+  @@index([workflowId, startedAt])
 }
 
 model BlogPost {
-  id           String      @id @default(uuid())
-  authorId     String
-  author       User        @relation(fields: [authorId], references: [id])
-  title        String
-  slug         String      @unique
-  content      String
-  summary      String?
-  status       BlogStatus  @default(DRAFT)
-  seoKeywords  String[]
-  heroImageUrl String?
-  trendSource  String?     // Ingested Google Trends / RSS Source URL
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id             String        @id @default(uuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User          @relation(fields: [authorId], references: [id])
+  title          String
+  slug           String        @unique
+  content        String
+  summary        String?
+  status         BlogStatus    @default(DRAFT)
+  seoKeywords    String[]
+  heroImageUrl   String?
+  trendSource    String?       // Ingested Google Trends / RSS Source URL
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId, status])
 }
 
 model AiGeneration {
@@ -280,6 +373,7 @@ model AiGeneration {
   organizationId String
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   userId         String
+  user           User             @relation("AiGenerationByUser", fields: [userId], references: [id])
   prompt         String
   response       String
   tokenCount     Int

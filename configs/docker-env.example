@@ -1,5 +1,5 @@
-# CircuitSoul OSS Services Configuration Env
-# Keep this file out of source control in production environments
+# CircuitSoul OSS Services Configuration Template
+# Copy to configs/docker-env for local Docker Compose execution
 
 # n8n configs
 N8N_ENCRYPTION_KEY=super-secret-key-change-in-prod

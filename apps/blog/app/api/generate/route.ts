@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { aiService } from '@circuitsoul/ai';
-import { prisma } from '@circuitsoul/db';
-import { parseSession } from '@circuitsoul/auth';
+import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
+import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
 
 export async function POST(request: Request) {
   try {
-    const session = parseSession(Object.fromEntries(request.headers.entries()));
+    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
+    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
     const body = await request.json();
     const { topic, keywords } = body;
 
@@ -22,7 +23,6 @@ export async function POST(request: Request) {
       ? keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
       : ['NDPR', 'African SaaS', 'Cloud Security'];
 
-    // Secure server-side AI Generation (API keys never exposed to client)
     const content = await aiService.generateBlogDraft(topic, keywordList);
 
     const wordCount = content.split(/\s+/).filter(Boolean).length;
@@ -32,47 +32,33 @@ export async function POST(request: Request) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
 
-    // Track AI Usage for customer billing
-    try {
-      if (session?.orgId) {
-        await prisma.usageEvent.create({
-          data: {
-            organizationId: session.orgId,
-            userId: session.userId,
-            eventType: 'AI_GENERATION',
-            tokensUsed: wordCount * 2,
-            generationMs: 1450,
-            rawPayload: {
-              type: 'BLOG_CONTENT',
-              topic,
-              wordCount
-            }
-          }
-        });
+    await prisma.usageEvent.create({
+      data: {
+        organizationId: session.orgId,
+        userId: session.userId,
+        eventType: 'AI_GENERATION',
+        tokensUsed: wordCount * 2,
+        generationMs: 1450,
+        rawPayload: {
+          type: 'BLOG_CONTENT',
+          topic,
+          wordCount
+        }
       }
-    } catch {
-      // Dev/mock mode fallback
-    }
+    });
 
-    // Attempt to persist draft in Prisma BlogPost
-    let dbRecord = null;
-    try {
-      if (session?.userId) {
-        dbRecord = await prisma.blogPost.create({
-          data: {
-            authorId: session.userId,
-            title: topic,
-            slug,
-            content,
-            summary: content.substring(0, 160) + '...',
-            status: 'DRAFT',
-            seoKeywords: keywordList
-          }
-        });
+    const dbRecord = await prisma.blogPost.create({
+      data: {
+        organizationId: session.orgId,
+        authorId: session.userId,
+        title: topic,
+        slug,
+        content,
+        summary: content.substring(0, 160) + '...',
+        status: 'DRAFT',
+        seoKeywords: keywordList
       }
-    } catch {
-      // Dev/mock mode fallback
-    }
+    });
 
     return NextResponse.json({
       success: true,
@@ -83,10 +69,17 @@ export async function POST(request: Request) {
         keywords: keywordList,
         wordCount,
         readingTime,
-        dbId: dbRecord?.id
+        dbId: dbRecord.id
       }
     });
   } catch (error: any) {
+    if (error instanceof Error && error.message.startsWith('Unauthorized')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: error.message || 'AI Generation failed' },
       { status: 500 }

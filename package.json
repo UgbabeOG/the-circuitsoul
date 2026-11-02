@@ -5,9 +5,11 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
+    "test:auth": "npx tsx --test packages/auth/src/index.test.ts",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "autoprefixer": "^10.6.2",
     "postcss": "^8.5.32",
     "prettier": "^3.2.5",
