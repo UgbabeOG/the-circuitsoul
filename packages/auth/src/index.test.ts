@@ -87,7 +87,7 @@ test('switchOrganization verifies DB membership before allowing org switch', asy
   }
 });
 
-test('parseSession accepts explicit org selection only as an override and preserves verified user context', () => {
+test('parseSession ignores caller-supplied organization overrides', () => {
   const session = {
     userId: 'user-override',
     email: 'override@example.com',
@@ -103,7 +103,7 @@ test('parseSession accepts explicit org selection only as an override and preser
 
   assert.ok(parsed);
   assert.equal(parsed?.userId, 'user-override');
-  assert.equal(parsed?.orgId, 'org-selected');
+  assert.equal(parsed?.orgId, 'org-original');
   assert.equal(parsed?.role, Role.MEMBER);
 });
 
@@ -131,20 +131,17 @@ test('tenant access guard blocks cross-tenant access', () => {
   assert.doesNotThrow(() => assertTenantAccess('org-a', 'org-a'));
 });
 
-test('clerk provider requires valid org-scoped JWTs and ignores custom sessions when configured', () => {
+test('external Clerk tokens are not accepted as internal sessions', () => {
   const originalProvider = process.env.AUTH_PROVIDER;
-  const originalClerkKey = process.env.CLERK_PUBLIC_KEY;
 
   try {
     process.env.AUTH_PROVIDER = 'clerk';
 
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+    const { privateKey } = crypto.generateKeyPairSync('rsa', {
       modulusLength: 2048,
       publicKeyEncoding: { type: 'spki', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
     });
-
-    process.env.CLERK_PUBLIC_KEY = publicKey;
 
     const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
     const payload = Buffer.from(
@@ -166,10 +163,7 @@ test('clerk provider requires valid org-scoped JWTs and ignores custom sessions 
 
     const validToken = `${signingInput}.${signature}`;
     const parsed = parseSession({ authorization: `Bearer ${validToken}` });
-
-    assert.ok(parsed);
-    assert.equal(parsed?.orgId, 'org-clerk-tenant');
-    assert.equal(parsed?.role, Role.ADMIN);
+    assert.equal(parsed, null);
 
     process.env.AUTH_PROVIDER = 'custom';
     assert.equal(parseSession({ authorization: `Bearer ${validToken}` }), null);
@@ -177,8 +171,6 @@ test('clerk provider requires valid org-scoped JWTs and ignores custom sessions 
     if (originalProvider === undefined) delete process.env.AUTH_PROVIDER;
     else process.env.AUTH_PROVIDER = originalProvider;
 
-    if (originalClerkKey === undefined) delete process.env.CLERK_PUBLIC_KEY;
-    else process.env.CLERK_PUBLIC_KEY = originalClerkKey;
   }
 });
 

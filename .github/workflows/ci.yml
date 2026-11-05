@@ -15,7 +15,7 @@ on:
 
 env:
   NODE_ENV: test
-  DATABASE_URL: "postgresql://circuitsoul:circuitsoul_test_password@localhost:5432/circuitsoul_test"
+  DATABASE_URL: "postgresql://circuitsoul:circuitsoul_test_password@localhost:5432/circuitsoul_test?schema=public"
   REDIS_URL: "redis://localhost:6379"
   USE_MOCK_ENGINES: "true"
   AUTH_PROVIDER: "custom"
@@ -48,7 +48,7 @@ jobs:
         run: pnpm --filter @circuitsoul/db generate
 
       - name: Run TypeScript checks
-        run: pnpm exec tsc --noEmit --skipLibCheck packages/auth/src/index.ts packages/api-adapters/src/index.ts packages/db/src/tenant.ts packages/db/src/index.ts
+        run: pnpm typecheck
 
       - name: Run lint
         run: pnpm lint
@@ -63,7 +63,6 @@ jobs:
         uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb
         with:
           path: .
-          baseline: .trufflehog-baseline.json
 
   test:
     runs-on: ubuntu-latest
@@ -113,13 +112,16 @@ jobs:
         run: pnpm --filter @circuitsoul/db generate
 
       - name: Run Prisma validation
-        run: pnpm --filter @circuitsoul/db exec prisma validate --schema=packages/db/prisma/schema.prisma
+        run: pnpm --filter @circuitsoul/db exec prisma validate --schema=prisma/schema.prisma
+
+      - name: Apply clean and upgrade migrations
+        run: pnpm --filter @circuitsoul/db exec prisma migrate deploy --schema=prisma/schema.prisma
 
       - name: Run unit tests
         run: pnpm test
 
       - name: Run Prisma migration status check
-        run: pnpm --filter @circuitsoul/db exec prisma migrate status --schema=packages/db/prisma/schema.prisma
+        run: pnpm --filter @circuitsoul/db exec prisma migrate status --schema=prisma/schema.prisma
 
   build:
     runs-on: ubuntu-latest
@@ -147,6 +149,64 @@ jobs:
 
       - name: Build all applications
         run: pnpm build
+
+  migration-upgrade:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: circuitsoul
+          POSTGRES_PASSWORD: circuitsoul_test_password
+          POSTGRES_DB: circuitsoul_test
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U circuitsoul -d circuitsoul_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: "postgresql://circuitsoul:circuitsoul_test_password@localhost:5432/circuitsoul_test?schema=public"
+      CREDENTIAL_ENCRYPTION_KEY: "synthetic-ci-credential-encryption-key"
+      CREDENTIAL_BACKFILL_CONFIRM: "YES"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @circuitsoul/db generate
+
+      - name: Create existing-schema fixture
+        run: pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/migrations/init/migration.sql --schema=prisma/schema.prisma
+
+      - name: Mark legacy baseline as applied and seed plaintext credential
+        run: |
+          pnpm --filter @circuitsoul/db exec prisma migrate resolve --applied init --schema=prisma/schema.prisma
+          pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/upgrade-test-seed.sql --schema=prisma/schema.prisma
+
+      - name: Backfill encrypted cloud credentials
+        run: pnpm credentials:backfill
+
+      - name: Apply upgrade migrations
+        run: pnpm --filter @circuitsoul/db exec prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Verify plaintext retirement and encrypted data
+        run: pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/upgrade-test-verify.sql --schema=prisma/schema.prisma
 
   dependency-scan:
     runs-on: ubuntu-latest

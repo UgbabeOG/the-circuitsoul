@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - Node.js 20+
-- pnpm 8+
+- pnpm 9.15.0
 - PostgreSQL 16+ (local or Docker)
 - Redis 7+ (local or Docker)
 - Docker (optional, for OSS engines)
@@ -108,11 +108,11 @@ pnpm test
 # Run auth tests only
 pnpm test:auth
 
-# TypeScript check (source files only)
-npx tsc --noEmit --strict --skipLibCheck --moduleResolution node --target es2022 --module esnext packages/auth/src/index.ts packages/db/src/tenant.ts packages/security/src/encryption.ts packages/api-adapters/src/index.ts packages/api-adapters/src/n8n.ts packages/api-adapters/src/ghost.ts
+# Full workspace TypeScript check
+pnpm typecheck
 
 # Prisma validation
-DATABASE_URL="your_url" pnpm --filter @circuitsoul/db exec prisma validate --schema=packages/db/prisma/schema.prisma
+DATABASE_URL="your_url" pnpm --filter @circuitsoul/db exec prisma validate --schema=prisma/schema.prisma
 
 # Lint
 pnpm lint
@@ -149,3 +149,6 @@ docker-compose -f infra/docker-compose.yml down
 - `USE_MOCK_ENGINES=true` is safe for local development — **must be `false` in production**
 - `configs/docker-env` is gitignored — never commit real values
 - All `CHANGE_ME_*` placeholders must be replaced before any non-local deployment
+
+See [`AUTHENTICATION.md`](./AUTHENTICATION.md) for provider/session setup and
+[`MIGRATIONS.md`](./MIGRATIONS.md) before upgrading an existing database.

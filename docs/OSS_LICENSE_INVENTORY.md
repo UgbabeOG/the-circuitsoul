@@ -1,6 +1,6 @@
 # CircuitSoul Open Source License Inventory
 
-**Branch:** `hardening/stage1-security-remediation`  
+**Branch:** `hardening/stage1-security-remediation`
 **Date:** 2026-11-02
 
 ## Purpose

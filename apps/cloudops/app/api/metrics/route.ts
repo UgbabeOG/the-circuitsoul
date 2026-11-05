@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAuthenticatedOrg } from '@circuitsoul/auth';
 import { opsAdapter } from '@circuitsoul/api-adapters';
 import { prisma } from '@circuitsoul/db';
+import { z } from 'zod';
 
 export async function GET(request: Request) {
   try {
@@ -11,9 +12,9 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const hostId = searchParams.get('hostId');
 
-    if (!hostId) {
+    if (!hostId || !z.string().uuid().safeParse(hostId).success) {
       return NextResponse.json(
-        { success: false, error: 'hostId is required' },
+        { success: false, error: 'A valid cloud environment UUID is required' },
         { status: 400 }
       );
     }
@@ -30,7 +31,17 @@ export async function GET(request: Request) {
       );
     }
 
-    const data = await opsAdapter.getResourceMetrics(environment.id);
+    let data: Awaited<ReturnType<typeof opsAdapter.getResourceMetrics>>;
+    try {
+      data = await opsAdapter.getResourceMetrics(environment.id);
+    } catch {
+      return NextResponse.json({
+        success: true,
+        data: { state: 'unavailable', cpu: null, memory: null, timestamp: null },
+        organizationId: session.orgId,
+        environmentId: environment.id
+      });
+    }
 
     return NextResponse.json({
       success: true,

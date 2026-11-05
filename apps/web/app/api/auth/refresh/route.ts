@@ -36,7 +36,6 @@ export async function POST(request: Request) {
 
     const response = NextResponse.json({
       success: true,
-      token: newToken,
       user: {
         id: refreshedSession.userId,
         email: refreshedSession.email,

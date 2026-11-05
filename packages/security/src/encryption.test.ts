@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   decryptCloudCredentials,
   encryptCloudCredentials
-} from './encryption.ts';
+} from './encryption';
 
 test('cloud credentials decrypt with the matching IV and reject tampering', () => {
   const originalKey = process.env.CREDENTIAL_ENCRYPTION_KEY;

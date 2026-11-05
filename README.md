@@ -29,7 +29,7 @@ The system is configured as a Turborepo monorepo with pnpm workspaces:
 
 ## Infrastructure Adapter Pattern
 
-To maintain absolute decoupling, third-party open-source engines are hosted strictly under `/services`. 
+To maintain absolute decoupling, third-party open-source engines are hosted strictly under `/services`.
 Direct database or API calls to these engines from application views are forbidden. Instead, applications communicate using `@circuitsoul/api-adapters`.
 
 ### Developer Mocks and auth safety
@@ -43,25 +43,30 @@ ALLOW_DEV_SESSION=true
 
 `ALLOW_DEV_SESSION=true` is a local-only developer convenience and must never be enabled in production. In production, the platform requires a valid signed session token and rejects missing or invalid identities without exception.
 
-Authentication is provider-aware. The default `AUTH_PROVIDER=custom` uses CircuitSoul’s signed HMAC session tokens. To integrate with an external identity provider, set `AUTH_PROVIDER=clerk` and provide `CLERK_PUBLIC_KEY` for JWT verification. The app will still reject missing or invalid sessions unless a valid trusted provider token is present.
+Authentication separates external identity-provider JWTs from CircuitSoul application sessions. Clerk tokens are accepted only by the callback, where the signature is verified against the rotating `CLERK_JWKS_URL` key set and mandatory expiry, issuer, audience, and verified-email claims are checked. The callback binds the provider subject to an internal user and issues a signed, HttpOnly CircuitSoul session cookie. Protected routes accept only this internal session through the cookie or `Authorization: Bearer`; provider JWTs, `x-circuitsoul-session`, and client-supplied organization headers are not authentication or tenant-selection mechanisms.
 
-For multi-organization users, the active tenant may be explicitly selected with the `x-circuitsoul-org-id` request header. The app accepts the override at parse time, but every organization-scoped route still verifies the selected org against the user’s real `Membership` records before granting access. This prevents trusted tokens from being used to cross into unapproved organizations.
+Clerk sign-in requires `CLERK_JWKS_URL`, `CLERK_ISSUER_URL`, and `CLERK_AUDIENCE`. Sign-in state is bound to an HttpOnly short-lived cookie and callback token values must be sent in the POST body, not a URL. An existing CircuitSoul account is linked only when the provider supplies a verified matching email; subsequent sign-ins use the durable provider-subject mapping. Organization access and role are checked against the current database membership on protected requests. Session refresh and logout revoke server-side session hashes. Do not enable the development session override outside local development.
 
-When `USE_MOCK_ENGINES=true`, the adapters fall back to local high-fidelity mock engines providing realistic telemetry, threat lists, and automation executions.
+When `USE_MOCK_ENGINES=true`, adapters may use limited local demo data. Demo
+responses are labeled as such; they are not live measurements or evidence of
+service health. Some verification actions, including Shield asset-to-agent
+verification, intentionally remain unavailable in mock mode.
 
 Required secret configuration for all non-local environments:
 
 ```env
 CIRCUITSOUL_AUTH_SECRET="replace-with-a-long-random-secret"
 AUTH_PROVIDER="custom" # or "clerk"
-CLERK_PUBLIC_KEY=""
+CLERK_JWKS_URL="https://your-clerk-domain/.well-known/jwks.json"
+CLERK_ISSUER_URL="https://your-clerk-domain"
+CLERK_AUDIENCE="circuitsoul-api"
 ```
 
 ## Getting Started
 
 1. **Install dependencies**:
    ```bash
-   pnpm install
+   pnpm install --frozen-lockfile
    ```
 
 2. **Database migration**:
@@ -71,6 +76,8 @@ CLERK_PUBLIC_KEY=""
 
    # Run production migrations
    pnpm --filter @circuitsoul/db migrate:deploy
+
+   # For an existing database, follow docs/MIGRATIONS.md before deploying.
    ```
 
 3. **Run Dev Environment**:
@@ -85,3 +92,11 @@ CLERK_PUBLIC_KEY=""
 
    docker-compose -f infra/docker-compose.yml up -d
    ```
+
+## Engineering and security references
+
+- [Authentication and session lifecycle](./docs/AUTHENTICATION.md)
+- [CI checks](./docs/CI.md)
+- [Database migrations and credential backfill](./docs/MIGRATIONS.md)
+- [Security and deployment checklist](./docs/SECURITY_DEPLOYMENT.md)
+- [Current audit and remaining risks](./AUDIT_REPORT.md)

@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
 import { prisma, enforceEntitlement, recordUsage } from '@circuitsoul/db';
 import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
+import { z } from 'zod';
+
+const ExecuteSchema = z.object({
+  payload: z.record(z.unknown()).default({}),
+  triggerSource: z.string().min(1).max(64).default('CIRCUITSOUL_FLOW_UI')
+}).strict();
 
 export async function POST(
   request: Request,
@@ -17,9 +23,13 @@ export async function POST(
     await enforceEntitlement(session.orgId, 'WORKFLOW_EXECUTION');
 
     const workflowId = params.id;
-    const body = await request.json().catch(() => ({}));
-    const payload = body.payload || {};
-    const triggerSource = body.triggerSource || 'CIRCUITSOUL_FLOW_UI';
+    const parsedBody = ExecuteSchema.safeParse(await request.json());
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { success: false, error: parsedBody.error.issues[0]?.message || 'Invalid execution request' },
+        { status: 400 }
+      );
+    }
 
     const dbWorkflow = await prisma.flowWorkflow.findFirst({
       where: { id: workflowId, organizationId: session.orgId }
@@ -31,6 +41,12 @@ export async function POST(
         { status: 404 }
       );
     }
+    if (dbWorkflow.status !== 'ACTIVE') {
+      return NextResponse.json(
+        { success: false, error: 'Only active workflows can be executed' },
+        { status: 409 }
+      );
+    }
 
     const externalWorkflowId = dbWorkflow.externalWorkflowId;
     if (!externalWorkflowId) {
@@ -40,37 +56,57 @@ export async function POST(
       );
     }
 
-    const execution = await flowAdapter.triggerWorkflow(
-      externalWorkflowId,
-      payload,
-      triggerSource
-    );
+    const executionRecord = await prisma.flowExecution.create({
+      data: { workflowId: dbWorkflow.id, status: 'RUNNING' }
+    });
+    const startedAt = Date.now();
+    let execution;
+    try {
+      execution = await flowAdapter.triggerWorkflow(
+        externalWorkflowId,
+        parsedBody.data.payload,
+        parsedBody.data.triggerSource
+      );
+    } catch (error) {
+      await prisma.flowExecution.update({
+        where: { id: executionRecord.id },
+        data: {
+          status: 'FAILED',
+          completedAt: new Date(),
+          logsJson: JSON.stringify({ error: error instanceof Error ? error.message : 'Engine request failed' })
+        }
+      });
+      return NextResponse.json(
+        { success: false, error: 'Workflow engine execution failed', executionId: executionRecord.id },
+        { status: 502 }
+      );
+    }
 
+    await prisma.flowExecution.update({
+      where: { id: executionRecord.id },
+      data: {
+        status: execution.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+        completedAt: new Date(),
+        logsJson: JSON.stringify(execution.output)
+      }
+    });
     await recordUsage({
       organizationId: session.orgId,
       eventType: 'WORKFLOW_EXECUTION',
       jobsExecuted: 1,
-      generationMs: execution.durationMs || 500,
+      generationMs: Date.now() - startedAt,
       rawPayload: {
         workflowId: dbWorkflow.id,
         externalWorkflowId,
         executionId: execution.id,
-        triggerSource
-      }
-    });
-
-    await prisma.flowExecution.create({
-      data: {
-        workflowId: dbWorkflow.id,
-        status: execution.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-        completedAt: new Date(),
-        logsJson: JSON.stringify(execution.output)
+        triggerSource: parsedBody.data.triggerSource
       }
     });
 
     return NextResponse.json({
       success: true,
       execution,
+      executionId: executionRecord.id,
       organizationId: session.orgId
     });
   } catch (error: any) {
@@ -91,7 +127,7 @@ export async function POST(
     }
 
     return NextResponse.json(
-      { success: false, error: error.message || 'Execution failed' },
+      { success: false, error: error instanceof Error ? error.message : 'Execution failed' },
       { status: 500 }
     );
   }

@@ -60,10 +60,10 @@ export async function POST(request: Request) {
       data: {
         organizationId: orgId,
         name: parsed.data.name,
-        type: parsed.data.type as any,
+        type: parsed.data.type,
         target: parsed.data.target,
         isAuthorized: parsed.data.isAuthorized,
-        verified: true
+        verified: false
       }
     });
 

@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedOrg } from '@circuitsoul/auth';
-import { prisma, Prisma } from '@circuitsoul/db';
+import { prisma } from '@circuitsoul/db';
 import { encryptCloudCredentials } from '@circuitsoul/security';
 import { z } from 'zod';
 
 const ConnectEnvironmentSchema = z.object({
   provider: z.enum(['AWS', 'GCP', 'AZURE']),
   name: z.string().min(1),
-  credentialsJson: z.string().min(1)
-});
+  credentials: z.string().min(1)
+}).strict();
 
 export async function POST(request: Request) {
   try {
@@ -25,11 +25,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const { provider, name, credentialsJson } = parsed.data;
+    const { provider, name, credentials } = parsed.data;
 
     // Encrypt credentials on write - never store plaintext
     const { credentialsEncrypted, credentialsIv } = encryptCloudCredentials(
-      credentialsJson
+      credentials
     );
 
     const environment = (await prisma.cloudEnvironment.create({
@@ -37,24 +37,19 @@ export async function POST(request: Request) {
         organizationId: session.orgId,
         provider,
         name,
-        credentialsJson: '', // Plaintext write path removed - intentionally empty
         credentialsEncrypted,
         credentialsIv,
-        status: 'CONNECTED',
-        score: 0,
-        costMonthly: new Prisma.Decimal(0)
+        status: 'DISCONNECTED'
       },
       select: {
         id: true,
         provider: true,
         name: true,
         status: true,
-        score: true,
-        costMonthly: true,
         createdAt: true,
         updatedAt: true
       }
-    })) as unknown as { id: string; provider: string; name: string; status: string; score: number; costMonthly: number; createdAt: Date; updatedAt: Date };
+    }));
 
     return NextResponse.json({
       success: true,
@@ -89,13 +84,11 @@ export async function GET(request: Request) {
         provider: true,
         name: true,
         status: true,
-        score: true,
-        costMonthly: true,
         createdAt: true,
         updatedAt: true
       },
       orderBy: { updatedAt: 'desc' }
-    })) as Array<{ id: string; provider: string; name: string; status: string; score: number; costMonthly: unknown; createdAt: Date; updatedAt: Date }>;
+    }));
 
     return NextResponse.json({
       success: true,

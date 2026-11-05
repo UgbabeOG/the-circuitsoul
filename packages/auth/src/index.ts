@@ -2,127 +2,100 @@ import * as crypto from 'crypto';
 import { Role } from '@circuitsoul/db';
 import { prisma } from '@circuitsoul/db';
 
-function getAuthProvider(): string {
-  return (process.env.AUTH_PROVIDER || 'custom').toLowerCase();
-}
-
-function toBase64Url(value: string): string {
-  return Buffer.from(value).toString('base64url');
-}
-
 function fromBase64Url(value: string): string {
   return Buffer.from(value, 'base64url').toString('utf8');
 }
 
-function normalizePublicKey(publicKey: string): string {
-  const trimmed = publicKey.trim();
-  if (trimmed.startsWith('-----BEGIN')) return trimmed;
-  const normalized = trimmed.replace(/\\s+/g, '');
-  const wrapped = normalized.match(/.{1,64}/g)?.join('\n') || normalized;
-  return `-----BEGIN PUBLIC KEY-----\n${wrapped}\n-----END PUBLIC KEY-----`;
+export interface ProviderIdentity {
+  subject: string;
+  email: string;
+  name?: string;
+  orgId: string;
 }
 
-function normalizeRole(value: unknown): Role | undefined {
-  const role = String(value ?? '').toUpperCase();
-  if (!role) return undefined;
-  if (role.includes('OWNER')) return Role.OWNER;
-  if (role.includes('ADMIN')) return Role.ADMIN;
-  if (role.includes('MEMBER')) return Role.MEMBER;
-  return undefined;
-}
+type ClerkJwk = JsonWebKey & { kid?: string; use?: string };
+let clerkJwksCache: { keys: ClerkJwk[]; expiresAt: number } | undefined;
 
-function verifyClerkJwt(token: string): UserSession | null {
-  const publicKeyPem = process.env.CLERK_PUBLIC_KEY;
-  if (!publicKeyPem || getAuthProvider() !== 'clerk') {
-    return null;
+async function loadClerkJwks(refresh = false): Promise<ClerkJwk[]> {
+  const configuredUrl = process.env.CLERK_JWKS_URL;
+  if (!configuredUrl) throw new Error('CLERK_JWKS_URL is required');
+  const jwksUrl = new URL(configuredUrl);
+  if (jwksUrl.protocol !== 'https:' && process.env.NODE_ENV !== 'test') {
+    throw new Error('CLERK_JWKS_URL must use HTTPS');
   }
+  if (!refresh && clerkJwksCache && clerkJwksCache.expiresAt > Date.now()) {
+    return clerkJwksCache.keys;
+  }
+
+  const response = await fetch(jwksUrl, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error(`Clerk JWKS request failed (${response.status})`);
+  const result = await response.json() as { keys?: ClerkJwk[] };
+  if (!Array.isArray(result.keys) || result.keys.length === 0) {
+    throw new Error('Clerk JWKS response contains no keys');
+  }
+  clerkJwksCache = { keys: result.keys, expiresAt: Date.now() + 5 * 60 * 1000 };
+  return result.keys;
+}
+
+export async function verifyProviderToken(token: string): Promise<ProviderIdentity | null> {
+  const issuer = process.env.CLERK_ISSUER_URL;
+  const audience = process.env.CLERK_AUDIENCE;
+  if (
+    !token ||
+    (process.env.AUTH_PROVIDER || 'custom').toLowerCase() !== 'clerk' ||
+    !issuer ||
+    !audience
+  ) return null;
 
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
+    const [headerPart, payloadPart, signaturePart] = parts;
+    const header = JSON.parse(fromBase64Url(headerPart)) as { alg?: string; kid?: string };
+    if (header.alg !== 'RS256' || !header.kid) return null;
 
-    const [headerB64, payloadB64, signatureB64] = parts;
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const signature = Buffer.from(signatureB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    let keys = await loadClerkJwks();
+    let jwk = keys.find((key) => key.kid === header.kid && key.kty === 'RSA' && key.use !== 'enc');
+    if (!jwk) {
+      keys = await loadClerkJwks(true);
+      jwk = keys.find((key) => key.kid === header.kid && key.kty === 'RSA' && key.use !== 'enc');
+    }
+    if (!jwk) return null;
+
     const verifier = crypto.createVerify('RSA-SHA256');
-    verifier.update(signingInput);
+    verifier.update(`${headerPart}.${payloadPart}`);
     verifier.end();
-
-    if (!verifier.verify(normalizePublicKey(publicKeyPem), signature)) {
+    if (!verifier.verify(crypto.createPublicKey({ key: jwk, format: 'jwk' }), Buffer.from(signaturePart, 'base64url'))) {
       return null;
     }
 
-    const payload = JSON.parse(fromBase64Url(payloadB64)) as Record<string, unknown>;
+    const claims = JSON.parse(fromBase64Url(payloadPart)) as Record<string, unknown>;
     const now = Math.floor(Date.now() / 1000);
-    if (typeof payload.exp === 'number' && payload.exp < now) {
-      return null;
-    }
+    if (
+      typeof claims.exp !== 'number' || claims.exp <= now ||
+      typeof claims.iss !== 'string' || claims.iss !== issuer ||
+      (typeof claims.nbf === 'number' && claims.nbf > now)
+    ) return null;
 
-    // Validate issuer
-    const issuer = process.env.CLERK_ISSUER_URL;
-    if (issuer) {
-      const tokenIssuer =
-        (payload.iss as string | undefined) ||
-        (payload.issuer as string | undefined);
-      if (tokenIssuer !== issuer) {
-        return null;
-      }
-    }
+    const audiences = Array.isArray(claims.aud)
+      ? claims.aud.filter((value): value is string => typeof value === 'string')
+      : typeof claims.aud === 'string' ? [claims.aud] : [];
+    if (!audiences.includes(audience)) return null;
 
-    // Validate audience
-    const audience = process.env.CLERK_AUDIENCE;
-    if (audience) {
-      const tokenAud = payload.aud as string | string[] | undefined;
-      const auds = Array.isArray(tokenAud) ? tokenAud : tokenAud ? [tokenAud] : [];
-      if (!auds.includes(audience)) {
-        return null;
-      }
-    }
-
-    const orgId =
-      (payload.org_id as string | undefined) ||
-      (payload.organization_id as string | undefined) ||
-      (payload.orgId as string | undefined) ||
-      (payload.organizationId as string | undefined);
-
-    const userId =
-      (payload.sub as string | undefined) ||
-      (payload.user_id as string | undefined) ||
-      (payload.userId as string | undefined);
-
-    if (!userId || !orgId) {
-      return null;
-    }
-
-    const permissions = Array.isArray(payload.permissions) ? payload.permissions : undefined;
-    const role = normalizeRole(
-      payload.role ?? payload.user_role ?? payload.org_role ?? permissions?.[0]
-    );
+    const subject = typeof claims.sub === 'string' ? claims.sub : '';
+    const email = typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : '';
+    const orgId = typeof claims.org_id === 'string' ? claims.org_id : '';
+    if (!subject || !email || claims.email_verified !== true || !orgId) return null;
 
     return {
-      userId,
-      email: (payload.email as string | undefined) || `${userId}@clerk.local`,
-      name: (payload.name as string | undefined) || (payload.full_name as string | undefined),
-      orgId,
-      role: role || Role.MEMBER
+      subject,
+      email,
+      name: typeof claims.name === 'string' ? claims.name : undefined,
+      orgId
     };
   } catch {
     return null;
   }
-}
-
-export function parseProviderToken(token: string): UserSession | null {
-  if (!token) return null;
-
-  if (getAuthProvider() === 'clerk') {
-    return verifyClerkJwt(token);
-  }
-
-  if (getAuthProvider() === 'custom') {
-    return verifySessionToken(token);
-  }
-
-  return verifySessionToken(token) || verifyClerkJwt(token);
 }
 
 export interface UserSession {
@@ -184,7 +157,7 @@ export function signSessionToken(session: Omit<UserSession, 'iat' | 'exp'>, expi
  * Verifies and parses a signed session token using timing-safe comparison
  */
 export function verifySessionToken(token: string): UserSession | null {
-  if (!token || !token.includes('.')) return null;
+  if (!token || token.split('.').length !== 2) return null;
 
   try {
     const [payloadB64, signature] = token.split('.');
@@ -203,15 +176,20 @@ export function verifySessionToken(token: string): UserSession | null {
       return null;
     }
 
-    const session: UserSession = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-
-    // Check expiration
+    const session = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as Partial<UserSession>;
     const now = Math.floor(Date.now() / 1000);
-    if (session.exp && session.exp < now) {
+    if (
+      typeof session.userId !== 'string' || !session.userId ||
+      typeof session.email !== 'string' || !session.email ||
+      typeof session.orgId !== 'string' || !session.orgId ||
+      !Object.values(Role).includes(session.role as Role) ||
+      typeof session.iat !== 'number' || typeof session.exp !== 'number' ||
+      session.iat > now || session.exp <= now || session.exp <= session.iat
+    ) {
       return null;
     }
 
-    return session;
+    return session as UserSession;
   } catch {
     return null;
   }
@@ -220,25 +198,16 @@ export function verifySessionToken(token: string): UserSession | null {
 /**
  * Parses user session from request headers and cookies.
  * Strictly verifies signatures. In production, never falls back to mock sessions.
- * Session org context is verified from the trusted token and then validated
- * against the user's Membership records before app access is granted. Org
- * switching may be requested explicitly through x-circuitsoul-org-id, but it
- * is only considered valid once DB membership checks confirm access.
+ * Only internal HMAC sessions authorize app requests. External provider
+ * credentials are exchanged for an internal session at the auth callback.
  */
 export function parseSession(headers: Record<string, string | undefined>): UserSession | null {
-  const overrideOrgId = headers['x-circuitsoul-org-id'] || headers['X-CircuitSoul-Org-Id'];
-  const applyOrgOverride = (session: UserSession): UserSession => {
-    if (!overrideOrgId) return session;
-    const sanitizedOrgId = overrideOrgId.trim();
-    return sanitizedOrgId ? { ...session, orgId: sanitizedOrgId } : session;
-  };
-
   // 1. Check Authorization Bearer token
   const authHeader = headers['authorization'] || headers['Authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.replace('Bearer ', '').trim();
-    const verified = parseProviderToken(token);
-    if (verified) return applyOrgOverride(verified);
+    const verified = verifySessionToken(token);
+    if (verified) return verified;
   }
 
   // 2. Check Cookie: circuitsoul_session
@@ -246,29 +215,23 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
   if (cookieHeader) {
     const match = cookieHeader.match(/circuitsoul_session=([^;]+)/);
     if (match && match[1]) {
-      const decoded = decodeURIComponent(match[1]);
-      const verified = parseProviderToken(decoded);
-      if (verified) return applyOrgOverride(verified);
+      try {
+        const verified = verifySessionToken(decodeURIComponent(match[1]));
+        if (verified) return verified;
+      } catch {
+        return null;
+      }
     }
   }
 
   // 3. Check signed custom session header
-  const customHeader = headers['x-circuitsoul-session'];
-  if (customHeader) {
-    // If it's a signed token
-    if (customHeader.includes('.')) {
-      const verified = parseProviderToken(customHeader);
-      if (verified) return applyOrgOverride(verified);
-    }
-  }
-
   // 4. Explicit dev override only when intentionally enabled in development.
   if (process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_SESSION === 'true') {
     return {
       userId: 'user-dev-uuid-001',
       email: 'dev@circuitsoul.com',
       name: 'Developer Admin (SME Owner)',
-      orgId: overrideOrgId ? overrideOrgId.trim() || 'org-dev-uuid-100' : 'org-dev-uuid-100',
+      orgId: 'org-dev-uuid-100',
       role: Role.OWNER
     };
   }
@@ -288,19 +251,18 @@ export function getSessionToken(headers: Record<string, string | undefined>): st
   const authHeader = headers['authorization'] || headers['Authorization'];
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice('Bearer '.length).trim();
-    if (parseProviderToken(token)) return token;
+    if (verifySessionToken(token)) return token;
   }
 
   const cookieHeader = headers['cookie'] || headers['Cookie'];
   const match = cookieHeader?.match(/circuitsoul_session=([^;]+)/);
   if (match?.[1]) {
-    const token = decodeURIComponent(match[1]);
-    if (parseProviderToken(token)) return token;
-  }
-
-  const customHeader = headers['x-circuitsoul-session'];
-  if (customHeader?.includes('.') && parseProviderToken(customHeader)) {
-    return customHeader;
+    try {
+      const token = decodeURIComponent(match[1]);
+      if (verifySessionToken(token)) return token;
+    } catch {
+      return null;
+    }
   }
 
   return null;
@@ -373,7 +335,7 @@ export async function revokeSession(token: string): Promise<void> {
   if (!token || !token.includes('.')) return;
 
   const tokenHash = hashToken(token);
-  const session = parseProviderToken(token);
+  const session = verifySessionToken(token);
   if (!session) return;
 
   await prisma.revokedSession.upsert({

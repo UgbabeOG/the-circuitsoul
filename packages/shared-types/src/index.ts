@@ -23,7 +23,6 @@ export const CloudEnvironmentSchema = z.object({
   organizationId: z.string().uuid(),
   provider: z.enum(['AWS', 'GCP', 'AZURE']),
   name: z.string().min(1),
-  credentialsJson: z.string(),
   status: z.string()
 });
 
@@ -90,13 +89,10 @@ export const AssetTypeSchema = z.enum([
 ]);
 
 export const AssetSchema = z.object({
-  id: z.string().uuid().optional(),
-  organizationId: z.string().uuid().optional(),
   name: z.string().min(2),
   type: AssetTypeSchema.default('DOMAIN'),
   target: z.string().min(3),
-  isAuthorized: z.boolean().default(true),
-  verified: z.boolean().default(false)
+  isAuthorized: z.literal(true)
 });
 
 export const ScanRequestSchema = z.object({
@@ -111,15 +107,15 @@ export const ScanRequestSchema = z.object({
 export const NDPRAssessmentInputSchema = z.object({
   organizationName: z.string().min(2),
   dbHostingRegion: z.string().min(2),
-  isDataInAdequacyZone: z.boolean().default(true),
-  encryptionAtRestEnabled: z.boolean().default(true),
-  encryptionInTransitEnabled: z.boolean().default(true),
-  consentLoggingActive: z.boolean().default(true),
+  isDataInAdequacyZone: z.boolean(),
+  encryptionAtRestEnabled: z.boolean(),
+  encryptionInTransitEnabled: z.boolean(),
+  consentLoggingActive: z.boolean(),
   dataRetentionDays: z.number().int().min(1).max(3650),
-  privacyPolicyPublished: z.boolean().default(true),
-  dpoDesignated: z.boolean().default(false),
-  breachNotificationProcessReady: z.boolean().default(false),
-  thirdPartyDataContractsSigned: z.boolean().default(false)
+  privacyPolicyPublished: z.boolean(),
+  dpoDesignated: z.boolean(),
+  breachNotificationProcessReady: z.boolean(),
+  thirdPartyDataContractsSigned: z.boolean()
 });
 
 export const SecurityConsultingRequestSchema = z.object({
@@ -148,4 +144,3 @@ export type AssetDTO = z.infer<typeof AssetSchema>;
 export type ScanRequest = z.infer<typeof ScanRequestSchema>;
 export type NDPRAssessmentInput = z.infer<typeof NDPRAssessmentInputSchema>;
 export type SecurityConsultingRequestDTO = z.infer<typeof SecurityConsultingRequestSchema>;
-

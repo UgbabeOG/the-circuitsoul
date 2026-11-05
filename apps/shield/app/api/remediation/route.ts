@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedOrg } from '@circuitsoul/auth';
 import { aiService } from '@circuitsoul/ai';
-import { enforceEntitlement, recordUsage } from '@circuitsoul/db';
+import { enforceEntitlement, prisma, recordUsage } from '@circuitsoul/db';
 import { z } from 'zod';
 
 const RemediationSchema = z.object({
-  vulnerabilityTitle: z.string().min(1),
-  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM')
-});
+  vulnerabilityId: z.string().uuid()
+}).strict();
 
 export async function POST(request: Request) {
   try {
@@ -28,24 +27,44 @@ export async function POST(request: Request) {
       );
     }
 
-    const advice = await aiService.recommendRemediation(
-      parsed.data.vulnerabilityTitle,
-      parsed.data.severity
-    );
+    const vulnerability = await prisma.shieldVulnerability.findFirst({
+      where: {
+        id: parsed.data.vulnerabilityId,
+        assessment: { organizationId: session.orgId }
+      },
+      select: { id: true, title: true, severity: true, description: true }
+    });
+    if (!vulnerability) {
+      return NextResponse.json({ success: false, error: 'Finding not found for this organization' }, { status: 404 });
+    }
+
+    const prompt = [
+      `Finding: ${vulnerability.title}`,
+      `Severity: ${vulnerability.severity}`,
+      `Scanner evidence: ${vulnerability.description}`
+    ].join('\n');
+    const startedAt = Date.now();
+    const advice = await aiService.recommendRemediation(vulnerability.title, vulnerability.severity);
 
     await recordUsage({
       organizationId: session.orgId,
       eventType: 'SHIELD_REMEDIATION',
-      generationMs: 1450,
-      rawPayload: {
-        vulnerabilityTitle: parsed.data.vulnerabilityTitle,
-        severity: parsed.data.severity
+      userId: session.userId,
+      generationMs: Date.now() - startedAt,
+      rawPayload: { vulnerabilityId: vulnerability.id, prompt, recommendation: advice }
+    });
+    await prisma.activityLog.create({
+      data: {
+        organizationId: session.orgId,
+        userId: session.userId,
+        action: 'SHIELD_REMEDIATION_GENERATED',
+        metadataJson: JSON.stringify({ vulnerabilityId: vulnerability.id, prompt, recommendation: advice })
       }
     });
 
     return NextResponse.json({
       success: true,
-      data: { remediation: advice },
+      data: { vulnerabilityId: vulnerability.id, remediation: advice },
       organizationId: session.orgId
     });
   } catch (error: any) {
