@@ -1,80 +1,92 @@
+import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { parseProviderToken, signSessionToken } from '@circuitsoul/auth';
+import { signSessionToken, verifyProviderToken } from '@circuitsoul/auth';
 import { prisma } from '@circuitsoul/db';
 
-function getVerifiedEmail(token: string): string | null {
+function cookieValue(request: Request, name: string): string | null {
+  const cookies = request.headers.get('cookie') || '';
+  const match = cookies.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  if (!match) return null;
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
-      email?: unknown;
-      email_verified?: unknown;
-    };
-
-    if (
-      typeof payload.email !== 'string' ||
-      payload.email.trim() === '' ||
-      payload.email_verified !== true
-    ) {
-      return null;
-    }
-
-    return payload.email.trim();
+    return decodeURIComponent(match[1]);
   } catch {
     return null;
   }
 }
 
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const token = searchParams.get('token');
+function matchesState(expected: string | null, actual: unknown): boolean {
+  if (!expected || typeof actual !== 'string') return false;
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(actual);
+  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+}
 
-    if (!token) {
+export async function POST(request: Request) {
+  try {
+    const body = await request.json() as { state?: unknown; token?: unknown };
+    if (!matchesState(cookieValue(request, 'circuitsoul_auth_state'), body.state)) {
       return NextResponse.json(
-        { success: false, error: 'A verified provider token is required' },
+        { success: false, error: 'Invalid or expired sign-in state' },
         { status: 401 }
       );
     }
 
-    if ((process.env.AUTH_PROVIDER || 'custom').toLowerCase() !== 'clerk') {
+    if (typeof body.token !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Verified provider sign-in is not configured' },
-        { status: 503 }
+        { success: false, error: 'A provider token is required' },
+        { status: 401 }
       );
     }
 
-    const verified = parseProviderToken(token);
-    const email = getVerifiedEmail(token);
-    if (!verified || !email) {
+    const identity = await verifyProviderToken(body.token);
+    if (!identity) {
       return NextResponse.json(
         { success: false, error: 'Invalid or unverified provider token' },
         { status: 401 }
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email }
+    let linkedIdentity = await prisma.providerIdentity.findUnique({
+      where: {
+        provider_providerSubject: {
+          provider: 'CLERK',
+          providerSubject: identity.subject
+        }
+      },
+      include: { user: true }
     });
 
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'No matching account found' },
-        { status: 403 }
-      );
+    if (!linkedIdentity) {
+      const user = await prisma.user.findUnique({
+        where: { email: identity.email }
+      });
+      if (!user || user.email.toLowerCase() !== identity.email) {
+        return NextResponse.json(
+          { success: false, error: 'No verified CircuitSoul account is linked to this identity' },
+          { status: 403 }
+        );
+      }
+
+      linkedIdentity = await prisma.providerIdentity.create({
+        data: {
+          provider: 'CLERK',
+          providerSubject: identity.subject,
+          emailAtLink: identity.email,
+          userId: user.id
+        },
+        include: { user: true }
+      });
     }
 
     const membership = await prisma.membership.findUnique({
       where: {
         userId_organizationId: {
-          userId: user.id,
-          organizationId: verified.orgId
+          userId: linkedIdentity.userId,
+          organizationId: identity.orgId
         }
       },
       include: { organization: true }
     });
-
     if (!membership) {
       return NextResponse.json(
         { success: false, error: 'No membership found for this account and organization' },
@@ -82,21 +94,19 @@ export async function GET(request: Request) {
       );
     }
 
-    const tokenString = signSessionToken({
-      userId: user.id,
-      email: user.email,
-      name: user.name || undefined,
+    const sessionToken = signSessionToken({
+      userId: linkedIdentity.user.id,
+      email: linkedIdentity.user.email,
+      name: linkedIdentity.user.name || undefined,
       orgId: membership.organizationId,
       role: membership.role
     });
-
     const response = NextResponse.json({
       success: true,
-      token: tokenString,
       user: {
-        id: user.id,
-        email: user.email,
-        name: user.name
+        id: linkedIdentity.user.id,
+        email: linkedIdentity.user.email,
+        name: linkedIdentity.user.name
       },
       organization: {
         id: membership.organizationId,
@@ -105,15 +115,20 @@ export async function GET(request: Request) {
         role: membership.role
       }
     });
-
-    response.cookies.set('circuitsoul_session', tokenString, {
+    response.cookies.set('circuitsoul_session', sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 7,
       path: '/'
     });
-
+    response.cookies.set('circuitsoul_auth_state', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 0,
+      path: '/api/auth/callback'
+    });
     return response;
   } catch {
     return NextResponse.json(
@@ -121,4 +136,11 @@ export async function GET(request: Request) {
       { status: 500 }
     );
   }
+}
+
+export async function GET() {
+  return NextResponse.json(
+    { success: false, error: 'Use the POST callback with state and token in the request body' },
+    { status: 405 }
+  );
 }

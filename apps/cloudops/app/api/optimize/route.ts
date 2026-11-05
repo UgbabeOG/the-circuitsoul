@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedOrg } from '@circuitsoul/auth';
 import { aiService } from '@circuitsoul/ai';
-import { enforceEntitlement, recordUsage } from '@circuitsoul/db';
+import { enforceEntitlement, prisma, recordUsage } from '@circuitsoul/db';
+import { opsAdapter } from '@circuitsoul/api-adapters';
 import { z } from 'zod';
 
 const OptimizationSchema = z.object({
-  provider: z.string().default('AWS'),
-  resourceDetails: z.string().min(1)
-});
+  environmentId: z.string().uuid()
+}).strict();
 
 export async function POST(request: Request) {
   try {
@@ -28,18 +28,39 @@ export async function POST(request: Request) {
       );
     }
 
-    const advice = await aiService.recommendCloudOptimization(
-      parsed.data.provider,
-      parsed.data.resourceDetails
-    );
+    const environment = await prisma.cloudEnvironment.findFirst({
+      where: { id: parsed.data.environmentId, organizationId: session.orgId },
+      select: { id: true, provider: true }
+    });
+    if (!environment) {
+      return NextResponse.json({ success: false, error: 'Cloud environment not found' }, { status: 404 });
+    }
+
+    const metrics = await opsAdapter.getResourceMetrics(environment.id);
+    if (metrics.state !== 'live' || metrics.cpu === null || metrics.memory === null) {
+      return NextResponse.json(
+        { success: false, state: metrics.state, error: 'Optimization requires complete live Prometheus metrics' },
+        { status: 409 }
+      );
+    }
+
+    const resourceDetails = JSON.stringify({
+      environmentId: environment.id,
+      cpuUtilizationPercent: metrics.cpu,
+      memoryUtilizationPercent: metrics.memory,
+      observedAt: metrics.timestamp
+    });
+    const startedAt = Date.now();
+    const advice = await aiService.recommendCloudOptimization(environment.provider, resourceDetails);
 
     await recordUsage({
       organizationId: session.orgId,
       eventType: 'CLOUD_OPTIMIZATION',
-      generationMs: 1450,
+      generationMs: Date.now() - startedAt,
       rawPayload: {
-        provider: parsed.data.provider,
-        resourceDetails: parsed.data.resourceDetails
+        environmentId: environment.id,
+        provider: environment.provider,
+        resourceDetails
       }
     });
 

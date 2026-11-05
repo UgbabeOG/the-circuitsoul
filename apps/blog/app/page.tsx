@@ -384,7 +384,7 @@ export default function BlogDashboard() {
                   {draftContent ? (
                     previewMode ? (
                       <div className="p-5 bg-slate-900/60 border border-white/5 rounded-xl max-h-[500px] overflow-y-auto prose prose-invert prose-emerald max-w-none text-xs text-slate-300 leading-relaxed space-y-3">
-                        <div dangerouslySetInnerHTML={{ __html: draftContent.replace(/\n/g, '<br/>') }} />
+                        <div className="whitespace-pre-wrap">{draftContent}</div>
                       </div>
                     ) : (
                       <textarea
@@ -400,7 +400,7 @@ export default function BlogDashboard() {
                       <Sparkles className="w-10 h-10 text-slate-600 mb-3 animate-pulse" />
                       <h4 className="text-sm font-bold text-white mb-1">Canvas is Empty</h4>
                       <p className="text-xs text-slate-400 max-w-md mb-4">
-                        Pick a trending topic on the left or enter a custom title, then click "Generate Full Technical Draft" to compose an article.
+                        Pick a trending topic on the left or enter a custom title, then click &quot;Generate Full Technical Draft&quot; to compose an article.
                       </p>
                       <Button variant="outline" size="sm" onClick={generateDraft} className="text-xs">
                         Generate Sample Article

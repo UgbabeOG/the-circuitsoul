@@ -113,7 +113,7 @@ export class GhostAdapter {
       const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: id })).toString('base64url');
       const now = Math.floor(Date.now() / 1000);
       const payload = Buffer.from(JSON.stringify({ iat: now, exp: now + 300, aud: '/admin/' })).toString('base64url');
-      
+
       const signature = crypto
         .createHmac('sha256', Buffer.from(secret, 'hex'))
         .update(`${header}.${payload}`)

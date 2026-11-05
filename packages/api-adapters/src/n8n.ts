@@ -79,7 +79,8 @@ export class N8nAdapter {
     // Use the configured webhook URL for execution.
     const webhookUrl = `${this.webhookBaseUrl}/${workflowId}`;
     const response = await axios.post(webhookUrl, payload, {
-      headers: this.getHeaders()
+      headers: this.getHeaders(),
+      timeout: 15_000
     });
     return response.data;
   }

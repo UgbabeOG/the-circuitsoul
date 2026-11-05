@@ -21,7 +21,7 @@ export class SecurityGateway {
       return false;
     }
     const expectedSignature = this.generateSignature(payload, timestamp);
-    
+
     try {
       return crypto.timingSafeEqual(
         Buffer.from(signature, 'hex'),

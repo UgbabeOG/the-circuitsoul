@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@circuitsoul/db';
 import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
+import { sanitizeBlogHtml } from '../../../lib/sanitize-content';
 
 export async function GET(request: Request) {
   try {
@@ -15,11 +16,12 @@ export async function GET(request: Request) {
       },
       orderBy: { updatedAt: 'desc' }
     });
+    const posts = dbPosts.map((post) => ({ ...post, content: sanitizeBlogHtml(post.content) }));
 
     return NextResponse.json({
       success: true,
-      posts: dbPosts,
-      count: dbPosts.length,
+      posts,
+      count: posts.length,
       organizationId: session.orgId
     });
   } catch (error: any) {

@@ -1,302 +1,401 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { Card, Button, Navbar } from '@circuitsoul/ui';
-import { Shield, ShieldAlert, CheckCircle, RefreshCw, FileDown, Server, Cpu, Database, HelpCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle, Cpu, FileDown, RefreshCw, Shield } from 'lucide-react';
+import { Button, Card, Navbar } from '@circuitsoul/ui';
+
+type Asset = {
+  id: string;
+  name: string;
+  type: string;
+  target: string;
+  isAuthorized: boolean;
+  verified: boolean;
+  agentId: string | null;
+};
+
+type Vulnerability = {
+  id: string;
+  title: string;
+  severity: string;
+  description: string;
+  remediation: string;
+  status: string;
+};
+
+type Assessment = {
+  id: string;
+  status: string;
+  score: number;
+  overallRisk: string;
+  isVerifiedTechnical: boolean;
+  createdAt: string;
+};
+
+type HistoryItem = {
+  id: string;
+  score: number;
+  compliant: boolean;
+  createdAt: string;
+};
+
+type YesNo = boolean | null;
+type NdprForm = {
+  dbHostingRegion: string;
+  isDataInAdequacyZone: YesNo;
+  encryptionAtRestEnabled: YesNo;
+  encryptionInTransitEnabled: YesNo;
+  consentLoggingActive: YesNo;
+  dataRetentionDays: string;
+  privacyPolicyPublished: YesNo;
+  dpoDesignated: YesNo;
+  breachNotificationProcessReady: YesNo;
+  thirdPartyDataContractsSigned: YesNo;
+};
+
+const initialNdprForm: NdprForm = {
+  dbHostingRegion: '',
+  isDataInAdequacyZone: null,
+  encryptionAtRestEnabled: null,
+  encryptionInTransitEnabled: null,
+  consentLoggingActive: null,
+  dataRetentionDays: '',
+  privacyPolicyPublished: null,
+  dpoDesignated: null,
+  breachNotificationProcessReady: null,
+  thirdPartyDataContractsSigned: null
+};
+
+async function readJson(response: Response) {
+  const result = await response.json();
+  if (!response.ok || !result.success) throw new Error(result.error || 'Request failed');
+  return result;
+}
 
 export default function ShieldDashboard() {
-  const [loading, setLoading] = useState(false);
-  const [vulns, setVulns] = useState<any[]>([]);
-  const [remediations, setRemediations] = useState<Record<string, string>>({});
-  const [remediationLoading, setRemediationLoading] = useState<Record<string, boolean>>({});
-  const [ndprReport, setNdprReport] = useState<any>(null);
-  const [ndprLoading, setNdprLoading] = useState(false);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState('');
+  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([]);
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [source, setSource] = useState('');
+  const [assetName, setAssetName] = useState('');
+  const [assetTarget, setAssetTarget] = useState('');
+  const [assetType, setAssetType] = useState('DOMAIN');
+  const [ownerAuthorized, setOwnerAuthorized] = useState(false);
+  const [agentId, setAgentId] = useState('');
+  const [ndprForm, setNdprForm] = useState(initialNdprForm);
+  const [ndprAssessment, setNdprAssessment] = useState<any>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [remediation, setRemediation] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
-  const [dbConfig, setDbConfig] = useState({
-    dbHostingRegion: 'ng-lagos-1',
-    encryptionAtRestEnabled: true,
-    encryptionInTransitEnabled: true,
-    consentLoggingActive: true,
-    dataRetentionDays: 365,
-    privacyPolicyPublished: true,
-    dpoDesignated: false,
-    breachNotificationProcessReady: false,
-    thirdPartyDataContractsSigned: false
-  });
+  const loadAssets = async () => {
+    try {
+      const result = await readJson(await fetch('/api/assets'));
+      setAssets(result.assets);
+      setSelectedAssetId((current: string) => current || result.assets[0]?.id || '');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to load assets');
+    }
+  };
+
+  const loadHistory = async () => {
+    try {
+      const result = await readJson(await fetch('/api/ndpr'));
+      setHistory(result.assessments);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to load assessment history');
+    }
+  };
+
+  const loadVulnerabilities = async (assetId: string) => {
+    if (!assetId) {
+      setVulnerabilities([]);
+      setAssessment(null);
+      return;
+    }
+    try {
+      const result = await readJson(await fetch(`/api/vulnerabilities?assetId=${encodeURIComponent(assetId)}`));
+      setVulnerabilities(result.data || []);
+      setAssessment(result.assessment || null);
+      setSource(result.source || '');
+      setError('');
+    } catch (cause) {
+      setVulnerabilities([]);
+      setAssessment(null);
+      setError(cause instanceof Error ? cause.message : 'Assessment unavailable');
+    }
+  };
 
   useEffect(() => {
-    fetchVulnerabilities();
-    runNdprAudit();
+    void loadAssets();
+    void loadHistory();
   }, []);
 
-  const fetchVulnerabilities = async () => {
-    setLoading(true);
+  useEffect(() => {
+    void loadVulnerabilities(selectedAssetId);
+  }, [selectedAssetId]);
+
+  const registerAsset = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
     try {
-      const res = await fetch('/api/shield/vulnerabilities', {
-        headers: { 'Content-Type': 'application/json' }
+      const response = await fetch('/api/assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: assetName,
+          target: assetTarget,
+          type: assetType,
+          isAuthorized: ownerAuthorized
+        })
       });
-      const data = await res.json();
-      if (data.success) {
-        setVulns(data.data || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch vulnerabilities', err);
+      const result = await readJson(response);
+      setAssets((current) => [result.asset, ...current]);
+      setSelectedAssetId(result.asset.id);
+      setAssetName('');
+      setAssetTarget('');
+      setOwnerAuthorized(false);
+      setNotice('Asset registered. It is not verified until its Wazuh agent mapping is confirmed.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Asset registration failed');
     } finally {
-      setLoading(false);
+      setBusy(false);
+    }
+  };
+
+  const verifyAsset = async () => {
+    if (!selectedAssetId) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await readJson(await fetch(`/api/assets/${selectedAssetId}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId })
+      }));
+      setAssets((current) => current.map((asset) => asset.id === result.asset.id ? result.asset : asset));
+      setNotice('Wazuh agent verified against the registered asset target.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Asset verification failed');
+    } finally {
+      setBusy(false);
     }
   };
 
   const triggerScan = async () => {
-    setLoading(true);
+    if (!selectedAssetId) return;
+    setBusy(true);
+    setError('');
     try {
-      const res = await fetch('/api/shield/vulnerabilities', {
+      const result = await readJson(await fetch('/api/vulnerabilities', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'agent-001' })
-      });
-      const data = await res.json();
-      if (data.success) {
-        await fetchVulnerabilities();
-      }
-    } catch (err) {
-      console.error('Scan trigger failed', err);
+        body: JSON.stringify({ assetId: selectedAssetId })
+      }));
+      setAssessment(result.assessment);
+      setSource(result.source);
+      setNotice('Scan accepted. Refresh assessment findings after the scanner completes.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Scan unavailable');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
-  const runNdprAudit = async () => {
-    setNdprLoading(true);
+  const runNdprAssessment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
     try {
-      const res = await fetch('/api/shield/ndpr', {
+      const input = {
+        ...ndprForm,
+        dataRetentionDays: Number(ndprForm.dataRetentionDays),
+        isDataInAdequacyZone: ndprForm.isDataInAdequacyZone,
+        encryptionAtRestEnabled: ndprForm.encryptionAtRestEnabled,
+        encryptionInTransitEnabled: ndprForm.encryptionInTransitEnabled,
+        consentLoggingActive: ndprForm.consentLoggingActive,
+        privacyPolicyPublished: ndprForm.privacyPolicyPublished,
+        dpoDesignated: ndprForm.dpoDesignated,
+        breachNotificationProcessReady: ndprForm.breachNotificationProcessReady,
+        thirdPartyDataContractsSigned: ndprForm.thirdPartyDataContractsSigned
+      };
+      const result = await readJson(await fetch('/api/ndpr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dbConfig)
-      });
-      const data = await res.json();
-      if (data.success) {
-        setNdprReport(data.data);
-      }
-    } catch (err) {
-      console.error('NDPR audit failed', err);
+        body: JSON.stringify(input)
+      }));
+      setNdprAssessment(result.assessment);
+      await loadHistory();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Assessment failed');
     } finally {
-      setNdprLoading(false);
+      setBusy(false);
     }
   };
 
-  const fetchAiRemediation = async (vulnId: string, title: string, severity: string) => {
-    setRemediationLoading(prev => ({ ...prev, [vulnId]: true }));
+  const getRemediation = async (findingId: string) => {
+    setBusy(true);
+    setError('');
     try {
-      const res = await fetch('/api/shield/remediation', {
+      const result = await readJson(await fetch('/api/remediation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vulnerabilityTitle: title, severity })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setRemediations(prev => ({ ...prev, [vulnId]: data.data.remediation }));
-      }
-    } catch (err) {
-      console.error('AI remediation failed', err);
+        body: JSON.stringify({ vulnerabilityId: findingId })
+      }));
+      setRemediation((current) => ({ ...current, [findingId]: result.data.remediation }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Remediation unavailable');
     } finally {
-      setRemediationLoading(prev => ({ ...prev, [vulnId]: false }));
+      setBusy(false);
     }
   };
+
+  const YesNoField = ({ label, value, onChange }: { label: string; value: YesNo; onChange: (value: YesNo) => void }) => (
+    <label className="flex items-center justify-between gap-3 text-slate-400">
+      {label}
+      <select
+        required
+        value={value === null ? '' : String(value)}
+        onChange={(event) => onChange(event.target.value === '' ? null : event.target.value === 'true')}
+        className="bg-slate-900 border border-slate-800 rounded p-2 text-white"
+      >
+        <option value="">Select</option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </label>
+  );
 
   return (
     <div className="flex flex-col min-h-screen bg-navy-950">
       <Navbar activeApp="shield" />
-
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <header className="flex flex-col sm:flex-row justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-2">
-              <Shield className="w-8 h-8 text-cyan-400" />
-              Shield Security Center
-            </h1>
-            <p className="text-slate-400 text-sm">Real-time container vulnerability assessments and NDPR compliance tracking.</p>
+            <h1 className="text-3xl font-black text-white flex items-center gap-2"><Shield className="w-8 h-8 text-cyan-400" />Shield Security Center</h1>
+            <p className="text-slate-400 text-sm">Evidence from an authorized Wazuh scan and clearly identified self-reported controls.</p>
           </div>
-          <Button
-            variant="glow-cyan"
-            onClick={triggerScan}
-            disabled={loading}
-            className="flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Run Security Scan
+          <Button variant="outline" onClick={() => void loadVulnerabilities(selectedAssetId)} disabled={busy || !selectedAssetId}>
+            <RefreshCw className="w-4 h-4 mr-2" />Refresh findings
           </Button>
-        </div>
+        </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="flex items-center gap-6">
-            <div className="relative w-20 h-20 flex items-center justify-center rounded-full border-4 border-cyan-500/20 shadow-[0_0_15px_rgba(0,210,255,0.1)]">
-              <span className="text-2xl font-black text-white">88</span>
-            </div>
+        {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+        {notice && <p role="status" className="text-sm text-cyan-300">{notice}</p>}
+
+        <Card>
+          <h2 className="text-lg font-bold text-white mb-4">Register an asset</h2>
+          <form onSubmit={registerAsset} className="grid gap-3 md:grid-cols-4">
+            <input required minLength={2} value={assetName} onChange={(event) => setAssetName(event.target.value)} placeholder="Asset name" className="bg-slate-900 border border-slate-800 rounded p-2 text-white" />
+            <input required minLength={3} value={assetTarget} onChange={(event) => setAssetTarget(event.target.value)} placeholder="Domain, IP, or target" className="bg-slate-900 border border-slate-800 rounded p-2 text-white" />
+            <select value={assetType} onChange={(event) => setAssetType(event.target.value)} className="bg-slate-900 border border-slate-800 rounded p-2 text-white">
+              {['DOMAIN', 'IP_ADDRESS', 'WEB_APP', 'DATABASE', 'CLOUD_STORAGE'].map((type) => <option key={type}>{type}</option>)}
+            </select>
+            <Button type="submit" variant="glow-cyan" disabled={busy || !ownerAuthorized}>Register</Button>
+            <label className="md:col-span-4 flex gap-2 text-xs text-slate-400">
+              <input type="checkbox" checked={ownerAuthorized} onChange={(event) => setOwnerAuthorized(event.target.checked)} required />
+              I am authorized by the asset owner to register and assess this target.
+            </label>
+          </form>
+        </Card>
+
+        <Card>
+          <div className="flex flex-wrap justify-between gap-4 items-center">
             <div>
-              <h3 className="font-bold text-sm text-slate-400 uppercase tracking-wider">Security Score</h3>
-              <p className="text-xs text-cyan-400 mt-1">Excellent (Low threat risk detected)</p>
+              <h2 className="text-lg font-bold text-white">Asset verification and scan</h2>
+              <p className="text-xs text-slate-400">Registration alone never marks an asset as verified.</p>
             </div>
-          </Card>
-
-          <Card className="flex items-center gap-6">
-            <div className="w-12 h-12 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-              <CheckCircle className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="font-bold text-sm text-slate-400 uppercase tracking-wider">NDPR Sovereignty</h3>
-              <p className="text-xs text-emerald-400 mt-1">{ndprReport ? ndprReport.compliant ? 'Compliant' : 'Non-compliant' : 'Loading...'}</p>
-            </div>
-          </Card>
-
-          <Card className="flex items-center gap-6">
-            <div className="w-12 h-12 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400 animate-pulse">
-              <ShieldAlert className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="font-bold text-sm text-slate-400 uppercase tracking-wider">Active Threats</h3>
-              <p className="text-xs text-amber-400 mt-1">{vulns.filter(v => v.status === 'OPEN').length} vulnerabilities detected</p>
-            </div>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <Card>
-              <h2 className="text-lg font-bold text-white mb-4">Vulnerability Monitoring (Wazuh OSS Engine)</h2>
-              {loading ? (
-                <div className="py-8 text-center text-slate-500">Querying threat indicators...</div>
-              ) : (
-                <div className="space-y-4">
-                  {vulns.map(v => (
-                    <div key={v.id || v.cve} className="border-b border-white/5 pb-4 last:border-0 last:pb-0">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <span className={`px-2 py-0.5 rounded text-2xs font-bold mr-2 uppercase ${
-                            v.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400' :
-                            v.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400' :
-                            'bg-amber-500/20 text-amber-400'
-                          }`}>
-                            {v.severity}
-                          </span>
-                          <span className="text-white font-semibold text-sm">{v.title}</span>
-                          <div className="text-slate-500 text-xs mt-1">{v.id || v.cve} &bull; status: <span className="text-slate-300 font-semibold">{v.status}</span></div>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => fetchAiRemediation(v.id || v.cve, v.title, v.severity)}
-                          disabled={remediationLoading[v.id || v.cve]}
-                          className="text-xs"
-                        >
-                          {remediationLoading[v.id || v.cve] ? 'Consulting...' : 'AI Remediation'}
-                        </Button>
-                      </div>
-                      <p className="text-slate-400 text-xs leading-relaxed mt-2">{v.description}</p>
-                      {remediations[v.id || v.cve] && (
-                        <div className="mt-3 p-3 bg-cyan-950/20 border border-cyan-500/10 rounded-lg text-xs">
-                          <h4 className="font-bold text-cyan-400 mb-2 flex items-center gap-1.5">
-                            <Cpu className="w-3.5 h-3.5" /> AI Recommended Remediation:
-                          </h4>
-                          <div className="text-slate-300 whitespace-pre-line leading-relaxed">{remediations[v.id || v.cve]}</div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
+            <select value={selectedAssetId} onChange={(event) => setSelectedAssetId(event.target.value)} className="bg-slate-900 border border-slate-800 rounded p-2 text-white" aria-label="Select asset">
+              <option value="">Select an asset</option>
+              {assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} — {asset.target}</option>)}
+            </select>
           </div>
+          {assets.find((asset) => asset.id === selectedAssetId) && (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <span className="text-sm text-slate-300">
+                {assets.find((asset) => asset.id === selectedAssetId)?.verified ? <CheckCircle className="inline w-4 h-4 text-emerald-400 mr-1" /> : <AlertTriangle className="inline w-4 h-4 text-amber-400 mr-1" />}
+                {assets.find((asset) => asset.id === selectedAssetId)?.verified ? 'Verified' : 'Unverified'}
+              </span>
+              <input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="Wazuh agent ID" className="bg-slate-900 border border-slate-800 rounded p-2 text-white" />
+              <Button variant="outline" onClick={verifyAsset} disabled={busy || !agentId}>Verify agent mapping</Button>
+              <Button variant="glow-cyan" onClick={triggerScan} disabled={busy || !assets.find((asset) => asset.id === selectedAssetId)?.verified}>Run authorized scan</Button>
+            </div>
+          )}
+        </Card>
 
-          <div className="space-y-6">
-            <Card>
-              <h2 className="text-lg font-bold text-white mb-4">NDPR Sovereignty</h2>
-              <div className="space-y-4 text-xs">
-                <div className="flex flex-col gap-1">
-                  <label className="text-slate-400 font-semibold">DB Hosting Region</label>
-                  <input
-                    type="text"
-                    value={dbConfig.dbHostingRegion}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, dbHostingRegion: e.target.value }))}
-                    className="bg-slate-900 border border-slate-800 rounded p-2 text-white outline-none focus:border-cyan-500"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Encryption at Rest</span>
-                  <input
-                    type="checkbox"
-                    checked={dbConfig.encryptionAtRestEnabled}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, encryptionAtRestEnabled: e.target.checked }))}
-                    className="w-4 h-4 accent-cyan-500"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Encryption In Transit</span>
-                  <input
-                    type="checkbox"
-                    checked={dbConfig.encryptionInTransitEnabled}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, encryptionInTransitEnabled: e.target.checked }))}
-                    className="w-4 h-4 accent-cyan-500"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Consent Logging Audited</span>
-                  <input
-                    type="checkbox"
-                    checked={dbConfig.consentLoggingActive}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, consentLoggingActive: e.target.checked }))}
-                    className="w-4 h-4 accent-cyan-500"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Privacy Policy Published</span>
-                  <input
-                    type="checkbox"
-                    checked={dbConfig.privacyPolicyPublished}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, privacyPolicyPublished: e.target.checked }))}
-                    className="w-4 h-4 accent-cyan-500"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Data Retention (days)</span>
-                  <input
-                    type="number"
-                    value={dbConfig.dataRetentionDays}
-                    onChange={(e) => setDbConfig(prev => ({ ...prev, dataRetentionDays: parseInt(e.target.value) || 365 }))}
-                    className="bg-slate-900 border border-slate-800 rounded p-2 text-white outline-none focus:border-cyan-500 w-20"
-                  />
-                </div>
-                {ndprReport && (
-                  <div className="pt-4 border-t border-white/5 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-slate-300">Compliance Score:</span>
-                      <span className={`font-black text-sm ${ndprReport.compliant ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {ndprReport.overallScore}/100
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      {ndprReport.pillars?.map((p: any, idx: number) => (
-                        <div key={idx} className="flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full ${p.passed ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                          <span className="text-slate-400 text-xs">{p.pillar}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {ndprReport.requiredRemediations?.length > 0 && (
-                      <div className="mt-2 p-2 bg-red-950/20 border border-red-500/10 rounded text-red-300 leading-normal">
-                        <strong>Remediation:</strong>
-                        <ul className="list-disc pl-4 mt-1 space-y-1">
-                          {ndprReport.requiredRemediations.map((r: string, i: number) => (
-                            <li key={i}>{r}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
+        {assessment && (
+          <Card>
+            <div className="flex flex-wrap justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-white">Technical assessment</h2>
+                <p className="text-xs text-slate-400">Status: {assessment.status} · Source: {source || (assessment.isVerifiedTechnical ? 'live' : 'demo')}</p>
               </div>
-            </Card>
-          </div>
-        </div>
+              <div className="text-right">
+                <div className="text-2xl font-black text-white">{assessment.status === 'COMPLETED' ? `${assessment.score}/100` : 'Not scored'}</div>
+                <div className="text-xs text-slate-400">Risk: {assessment.overallRisk}</div>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 mt-3">Score formula: 100 minus finding weights (critical 30, high 18, medium 8, low 3), bounded at 0. This assessment is not a certification.</p>
+            <div className="mt-4 space-y-4">
+              {vulnerabilities.map((finding) => (
+                <div key={finding.id} className="border-t border-white/10 pt-4">
+                  <div className="flex flex-wrap justify-between gap-3">
+                    <div>
+                      <strong className="text-white">{finding.title}</strong>
+                      <p className="text-xs text-slate-400 mt-1">{finding.severity} · {finding.status}</p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => void getRemediation(finding.id)} disabled={busy}>
+                      <Cpu className="w-4 h-4 mr-1" />AI remediation
+                    </Button>
+                  </div>
+                  <p className="text-sm text-slate-300 mt-2">{finding.description}</p>
+                  <p className="text-xs text-slate-400 mt-2">Scanner guidance: {finding.remediation}</p>
+                  {remediation[finding.id] && <p className="whitespace-pre-line text-sm text-cyan-200 mt-3">{remediation[finding.id]}</p>}
+                </div>
+              ))}
+              {assessment.status === 'COMPLETED' && !vulnerabilities.length && <p className="text-sm text-emerald-300">No findings were returned by the scanner for this assessment.</p>}
+            </div>
+          </Card>
+        )}
+
+        <Card>
+          <h2 className="text-lg font-bold text-white mb-2">NDPA / NDPR readiness self-assessment</h2>
+          <p className="text-xs text-amber-300 mb-4">Answers are self-reported and not independently verified. Results are not a certification or regulatory approval.</p>
+          <form onSubmit={runNdprAssessment} className="grid gap-4 md:grid-cols-2 text-sm">
+            <label className="flex flex-col gap-1 text-slate-400">Hosting region<input required minLength={2} value={ndprForm.dbHostingRegion} onChange={(event) => setNdprForm((form) => ({ ...form, dbHostingRegion: event.target.value }))} className="bg-slate-900 border border-slate-800 rounded p-2 text-white" /></label>
+            <label className="flex flex-col gap-1 text-slate-400">Retention days<input required type="number" min={1} max={3650} value={ndprForm.dataRetentionDays} onChange={(event) => setNdprForm((form) => ({ ...form, dataRetentionDays: event.target.value }))} className="bg-slate-900 border border-slate-800 rounded p-2 text-white" /></label>
+            <YesNoField label="Adequacy zone confirmed" value={ndprForm.isDataInAdequacyZone} onChange={(value) => setNdprForm((form) => ({ ...form, isDataInAdequacyZone: value }))} />
+            <YesNoField label="Encryption at rest enabled" value={ndprForm.encryptionAtRestEnabled} onChange={(value) => setNdprForm((form) => ({ ...form, encryptionAtRestEnabled: value }))} />
+            <YesNoField label="Encryption in transit enabled" value={ndprForm.encryptionInTransitEnabled} onChange={(value) => setNdprForm((form) => ({ ...form, encryptionInTransitEnabled: value }))} />
+            <YesNoField label="Consent logging active" value={ndprForm.consentLoggingActive} onChange={(value) => setNdprForm((form) => ({ ...form, consentLoggingActive: value }))} />
+            <YesNoField label="Privacy policy published" value={ndprForm.privacyPolicyPublished} onChange={(value) => setNdprForm((form) => ({ ...form, privacyPolicyPublished: value }))} />
+            <YesNoField label="DPO designated" value={ndprForm.dpoDesignated} onChange={(value) => setNdprForm((form) => ({ ...form, dpoDesignated: value }))} />
+            <YesNoField label="Breach response process ready" value={ndprForm.breachNotificationProcessReady} onChange={(value) => setNdprForm((form) => ({ ...form, breachNotificationProcessReady: value }))} />
+            <YesNoField label="Third-party data contracts signed" value={ndprForm.thirdPartyDataContractsSigned} onChange={(value) => setNdprForm((form) => ({ ...form, thirdPartyDataContractsSigned: value }))} />
+            <Button type="submit" variant="glow-cyan" disabled={busy} className="md:col-span-2">Save readiness assessment</Button>
+          </form>
+          {ndprAssessment && (
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <h3 className="font-bold text-white">Self-reported score: {ndprAssessment.overallScore}/100</h3>
+              <p className="text-xs text-slate-400 mt-1">{ndprAssessment.disclaimer}</p>
+              <a className="inline-flex items-center text-cyan-300 text-sm mt-3" href={`/api/reports/${ndprAssessment.id}`}><FileDown className="w-4 h-4 mr-2" />Download assessment report</a>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <h2 className="text-lg font-bold text-white mb-3">Assessment history</h2>
+          {history.length ? history.map((item) => (
+            <div key={item.id} className="flex flex-wrap justify-between gap-2 border-t border-white/10 py-3 text-sm">
+              <span className="text-slate-300">{new Date(item.createdAt).toLocaleString()} · Self-reported score {item.score}/100</span>
+              <a className="text-cyan-300" href={`/api/reports/${item.id}`}>Download report</a>
+            </div>
+          )) : <p className="text-sm text-slate-400">No readiness assessments have been saved.</p>}
+        </Card>
       </main>
     </div>
   );

@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
 import { prisma } from '@circuitsoul/db';
 import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
+import { z } from 'zod';
+
+const ToggleSchema = z.object({ status: z.enum(['ACTIVE', 'INACTIVE']) }).strict();
 
 export async function POST(
   request: Request,
@@ -13,8 +16,14 @@ export async function POST(
       Permission.MANAGE_WORKFLOWS
     );
     const workflowId = params.id;
-    const body = await request.json();
-    const newStatus: 'ACTIVE' | 'INACTIVE' = body.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
+    const body = ToggleSchema.safeParse(await request.json());
+    if (!body.success) {
+      return NextResponse.json(
+        { success: false, error: body.error.issues[0]?.message || 'Invalid workflow status' },
+        { status: 400 }
+      );
+    }
+    const newStatus = body.data.status;
 
     const existingWorkflow = await prisma.flowWorkflow.findFirst({
       where: { id: workflowId, organizationId: session.orgId }
