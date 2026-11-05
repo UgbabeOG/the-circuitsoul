@@ -211,6 +211,7 @@ model Asset {
   name           String
   type           AssetType          @default(DOMAIN)
   target         String             // e.g. "api.startup.ng" or "197.210.64.12"
+  agentId        String?            // External engine agent ID (e.g. Wazuh agent ID) resolved from trusted asset mapping
   isAuthorized   Boolean            @default(true) // explicit SME owner authorization
   verified       Boolean            @default(false)
   lastScannedAt  DateTime?
@@ -362,6 +363,7 @@ model BlogPost {
   seoKeywords    String[]
   heroImageUrl   String?
   trendSource    String?       // Ingested Google Trends / RSS Source URL
+  externalGhostId String?      // External Ghost CMS post ID for org-owned mapping
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -424,4 +426,15 @@ model ActivityLog {
   userAgent      String?
   metadataJson   String?      // Action-specific dynamic parameters
   createdAt      DateTime     @default(now())
+}
+
+model RevokedSession {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  revokedAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([tokenHash])
+  @@index([userId])
 }

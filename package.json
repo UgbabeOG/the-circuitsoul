@@ -5,7 +5,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
-    "test": "npx tsx --test packages/auth/src/index.test.ts packages/db/src/__tests__/tenant-isolation.test.ts",
+    "test": "npx tsx --test packages/auth/src/index.test.ts packages/db/src/__tests__/tenant-isolation.test.ts packages/db/src/__tests__/cross-org-isolation.test.ts packages/db/src/__tests__/cross-org-api.test.ts",
     "test:auth": "npx tsx --test packages/auth/src/index.test.ts",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },

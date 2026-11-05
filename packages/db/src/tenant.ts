@@ -8,6 +8,17 @@ import { prisma } from './index';
  * Prevents horizontal privilege escalation where Tenant A accesses Tenant B data.
  */
 
+const ROLE_HIERARCHY: Record<Role, number> = {
+  [Role.MEMBER]: 1,
+  [Role.ADMIN]: 2,
+  [Role.OWNER]: 3
+};
+
+function roleSatisfies(userRole: Role, requiredRoles: Role[]): boolean {
+  const userRank = ROLE_HIERARCHY[userRole];
+  return requiredRoles.some((r) => userRank >= ROLE_HIERARCHY[r]);
+}
+
 export function assertTenantAccess(resourceOrgId: string | null | undefined, sessionOrgId: string | null | undefined): void {
   if (!sessionOrgId) {
     throw new Error('TenantAccessDenied: No active organization session.');
@@ -58,7 +69,7 @@ export async function resolveActiveOrganization(
     throw new Error('TenantAccessDenied: Requested organization is not available to this user.');
   }
 
-  if (!requiredRoles.includes(membership.role)) {
+  if (!roleSatisfies(membership.role, requiredRoles)) {
     const roles = requiredRoles.join(' or ');
     throw new Error(`TenantAccessDenied: Requires ${roles} role in this organization.`);
   }

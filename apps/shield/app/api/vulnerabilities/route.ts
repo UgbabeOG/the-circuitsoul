@@ -17,18 +17,13 @@ const NdpRConfigSchema = z.object({
 });
 
 const ScanRequestSchema = z.object({
-  agentId: z.string().min(1),
-  assetId: z.string().uuid().optional()
+  assetId: z.string().uuid()
 });
 
 async function authorizeAssetAccess(
   organizationId: string,
-  assetId?: string
+  assetId: string
 ) {
-  if (!assetId) {
-    throw new Error('Asset authorization required: assetId must be provided for scan operations.');
-  }
-
   const asset = await prisma.asset.findFirst({
     where: { id: assetId, organizationId, isAuthorized: true }
   });
@@ -47,20 +42,28 @@ export async function GET(request: Request) {
     );
 
     const { searchParams } = new URL(request.url);
-    const agentId = searchParams.get('agentId') || 'agent-001';
-    const assetId = searchParams.get('assetId') || undefined;
+    const assetId = searchParams.get('assetId');
+
+    if (!assetId) {
+      return NextResponse.json(
+        { success: false, error: 'assetId is required' },
+        { status: 400 }
+      );
+    }
 
     // Require asset authorization before exposing vulnerability data
-    if (assetId) {
-      await authorizeAssetAccess(session.orgId, assetId);
-    }
+    const asset = await authorizeAssetAccess(session.orgId, assetId);
+
+    // Resolve agent ID from trusted org-owned asset mapping, never from caller input
+    const agentId = asset.agentId || asset.target;
 
     const data = await shieldAdapter.getVulnerabilities(agentId);
 
     return NextResponse.json({
       success: true,
       data,
-      organizationId: session.orgId
+      organizationId: session.orgId,
+      assetId: asset.id
     });
   } catch (error: any) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {
@@ -94,7 +97,10 @@ export async function POST(request: Request) {
     // Require explicit asset authorization before triggering any scan
     const asset = await authorizeAssetAccess(session.orgId, parsed.data.assetId);
 
-    const result = await shieldAdapter.triggerScan(parsed.data.agentId);
+    // Resolve agent ID from trusted org-owned asset mapping
+    const agentId = asset.agentId || asset.target;
+
+    const result = await shieldAdapter.triggerScan(agentId);
 
     // Record the scan in the assessment history
     await prisma.shieldAssessment.create({

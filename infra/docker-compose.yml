@@ -41,7 +41,7 @@ services:
 
   # n8n - Automation Flow Engine
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:1.68.0
     container_name: circuitsoul-flow-n8n
     restart: unless-stopped
     ports:
@@ -55,10 +55,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Ghost - Blog Engine
   ghost:
-    image: ghost:5-alpine
+    image: ghost:5.42.0-alpine
     container_name: circuitsoul-blog-ghost
     restart: unless-stopped
     ports:
@@ -69,6 +75,12 @@ services:
       - ../configs/docker-env
     volumes:
       - ghost_data:/var/lib/ghost/content
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2368/ghost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Wazuh - Security & Threat Manager
   wazuh:
@@ -83,10 +95,16 @@ services:
       - ../configs/docker-env
     volumes:
       - wazuh_data:/var/ossec/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:55000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # Prometheus - Ops monitoring engine
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:2.53.0
     container_name: circuitsoul-ops-prometheus
     restart: unless-stopped
     ports:
@@ -96,6 +114,12 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   circuitsoul-net:

@@ -66,7 +66,11 @@ CLERK_PUBLIC_KEY=""
 
 2. **Database migration**:
    ```bash
-   npx prisma db push --schema=packages/db/prisma/schema.prisma
+   # Generate Prisma client
+   pnpm --filter @circuitsoul/db generate
+
+   # Run production migrations
+   pnpm --filter @circuitsoul/db migrate:deploy
    ```
 
 3. **Run Dev Environment**:
@@ -76,5 +80,8 @@ CLERK_PUBLIC_KEY=""
 
 4. **Run Dockerized Engines**:
    ```bash
+   # Copy the committed env example (create your own secrets)
+   cp configs/docker-env.example configs/docker-env
+
    docker-compose -f infra/docker-compose.yml up -d
    ```

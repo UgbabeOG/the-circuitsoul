@@ -35,6 +35,9 @@ importers:
       '@circuitsoul/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@circuitsoul/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@circuitsoul/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -50,6 +53,9 @@ importers:
       react-dom:
         specifier: ^18.2.0
         version: 18.3.1(react@18.3.1)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@circuitsoul/config':
         specifier: workspace:*
@@ -115,6 +121,12 @@ importers:
       '@circuitsoul/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@circuitsoul/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@circuitsoul/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       '@circuitsoul/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -244,6 +256,9 @@ importers:
       '@circuitsoul/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@circuitsoul/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@circuitsoul/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -259,6 +274,9 @@ importers:
       react-dom:
         specifier: ^18.2.0
         version: 18.3.1(react@18.3.1)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@circuitsoul/config':
         specifier: workspace:*

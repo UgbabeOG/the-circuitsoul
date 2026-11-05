@@ -84,6 +84,26 @@ test('switchOrganization verifies DB membership before allowing org switch', asy
   }
 });
 
+test('parseSession accepts explicit org selection only as an override and preserves verified user context', () => {
+  const session = {
+    userId: 'user-override',
+    email: 'override@example.com',
+    orgId: 'org-original',
+    role: Role.MEMBER
+  };
+
+  const token = signSessionToken(session);
+  const parsed = parseSession({
+    cookie: `circuitsoul_session=${encodeURIComponent(token)}`,
+    'x-circuitsoul-org-id': 'org-selected'
+  });
+
+  assert.ok(parsed);
+  assert.equal(parsed?.userId, 'user-override');
+  assert.equal(parsed?.orgId, 'org-selected');
+  assert.equal(parsed?.role, Role.MEMBER);
+});
+
 test('role checks reject unauthorized sessions and accept valid membership', () => {
   const adminSession = {
     userId: 'user-789',

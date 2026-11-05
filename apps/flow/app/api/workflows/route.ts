@@ -7,20 +7,18 @@ export async function GET(request: Request) {
   try {
     const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
     await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
-    const workflows = await flowAdapter.getWorkflows();
-    const templates = flowAdapter.getTemplates();
 
     const dbWorkflows = await prisma.flowWorkflow.findMany({
       where: { organizationId: session.orgId },
-      include: { executions: { take: 5, orderBy: { startedAt: 'desc' } } }
+      include: { executions: { take: 5, orderBy: { startedAt: 'desc' } } },
+      orderBy: { updatedAt: 'desc' }
     });
 
     return NextResponse.json({
       success: true,
-      workflows,
-      dbWorkflows,
-      templates,
-      count: workflows.length
+      workflows: dbWorkflows,
+      count: dbWorkflows.length,
+      organizationId: session.orgId
     });
   } catch (error: any) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {
@@ -58,6 +56,8 @@ export async function POST(request: Request) {
       triggerType: body.triggerType
     });
 
+    const externalWorkflowId = (newWorkflow as any)?.id || null;
+
     const dbRecord = await prisma.flowWorkflow.create({
       data: {
         organizationId: session.orgId,
@@ -65,14 +65,15 @@ export async function POST(request: Request) {
         description: body.description || null,
         status: 'ACTIVE',
         triggerType: body.triggerType || 'Manual',
-        definitionJson: JSON.stringify(body.nodes || [])
+        definitionJson: JSON.stringify(body.nodes || []),
+        externalWorkflowId
       }
     });
 
     return NextResponse.json({
       success: true,
-      workflow: newWorkflow,
-      dbRecord
+      workflow: dbRecord,
+      organizationId: session.orgId
     });
   } catch (error: any) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {

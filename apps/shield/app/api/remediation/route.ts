@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedOrg } from '@circuitsoul/auth';
 import { aiService } from '@circuitsoul/ai';
+import { enforceEntitlement, recordUsage } from '@circuitsoul/db';
 import { z } from 'zod';
 
 const RemediationSchema = z.object({
@@ -13,6 +14,10 @@ export async function POST(request: Request) {
     const { session } = await requireAuthenticatedOrg(
       Object.fromEntries(request.headers.entries())
     );
+
+    // Enforce entitlement before AI remediation
+    await enforceEntitlement(session.orgId, 'AI_GENERATION');
+
     const body = await request.json();
 
     const parsed = RemediationSchema.safeParse(body);
@@ -28,6 +33,16 @@ export async function POST(request: Request) {
       parsed.data.severity
     );
 
+    await recordUsage({
+      organizationId: session.orgId,
+      eventType: 'SHIELD_REMEDIATION',
+      generationMs: 1450,
+      rawPayload: {
+        vulnerabilityTitle: parsed.data.vulnerabilityTitle,
+        severity: parsed.data.severity
+      }
+    });
+
     return NextResponse.json({
       success: true,
       data: { remediation: advice },
@@ -38,6 +53,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
     if (error instanceof Error && error.message.startsWith('TenantAccessDenied')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
+    }
+    if (error instanceof Error && error.message.startsWith('EntitlementDenied')) {
       return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
     return NextResponse.json(

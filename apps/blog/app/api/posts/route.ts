@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { blogAdapter } from '@circuitsoul/api-adapters';
 import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
 import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
 
@@ -7,11 +6,9 @@ export async function GET(request: Request) {
   try {
     const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
     await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
-    const posts = await blogAdapter.getPosts();
 
     const dbPosts = await prisma.blogPost.findMany({
       where: {
-        authorId: session.userId,
         organizationId: session.orgId
       },
       orderBy: { updatedAt: 'desc' }
@@ -19,9 +16,9 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      posts,
-      dbPosts,
-      count: posts.length
+      posts: dbPosts,
+      count: dbPosts.length,
+      organizationId: session.orgId
     });
   } catch (error: any) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {

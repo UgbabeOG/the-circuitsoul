@@ -58,6 +58,27 @@ function verifyClerkJwt(token: string): UserSession | null {
       return null;
     }
 
+    // Validate issuer
+    const issuer = process.env.CLERK_ISSUER_URL;
+    if (issuer) {
+      const tokenIssuer =
+        (payload.iss as string | undefined) ||
+        (payload.issuer as string | undefined);
+      if (tokenIssuer !== issuer) {
+        return null;
+      }
+    }
+
+    // Validate audience
+    const audience = process.env.CLERK_AUDIENCE;
+    if (audience) {
+      const tokenAud = payload.aud as string | string[] | undefined;
+      const auds = Array.isArray(tokenAud) ? tokenAud : tokenAud ? [tokenAud] : [];
+      if (!auds.includes(audience)) {
+        return null;
+      }
+    }
+
     const orgId =
       (payload.org_id as string | undefined) ||
       (payload.organization_id as string | undefined) ||
@@ -90,7 +111,7 @@ function verifyClerkJwt(token: string): UserSession | null {
   }
 }
 
-function parseProviderToken(token: string): UserSession | null {
+export function parseProviderToken(token: string): UserSession | null {
   if (!token) return null;
 
   if (getAuthProvider() === 'clerk') {
@@ -199,17 +220,25 @@ export function verifySessionToken(token: string): UserSession | null {
 /**
  * Parses user session from request headers and cookies.
  * Strictly verifies signatures. In production, never falls back to mock sessions.
- * Organization ID comes only from the verified session token — never from
- * client-supplied headers. Org switching must go through resolveActiveOrganization
- * which verifies DB membership.
+ * Session org context is verified from the trusted token and then validated
+ * against the user's Membership records before app access is granted. Org
+ * switching may be requested explicitly through x-circuitsoul-org-id, but it
+ * is only considered valid once DB membership checks confirm access.
  */
 export function parseSession(headers: Record<string, string | undefined>): UserSession | null {
+  const overrideOrgId = headers['x-circuitsoul-org-id'] || headers['X-CircuitSoul-Org-Id'];
+  const applyOrgOverride = (session: UserSession): UserSession => {
+    if (!overrideOrgId) return session;
+    const sanitizedOrgId = overrideOrgId.trim();
+    return sanitizedOrgId ? { ...session, orgId: sanitizedOrgId } : session;
+  };
+
   // 1. Check Authorization Bearer token
   const authHeader = headers['authorization'] || headers['Authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.replace('Bearer ', '').trim();
     const verified = parseProviderToken(token);
-    if (verified) return verified;
+    if (verified) return applyOrgOverride(verified);
   }
 
   // 2. Check Cookie: circuitsoul_session
@@ -219,7 +248,7 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
     if (match && match[1]) {
       const decoded = decodeURIComponent(match[1]);
       const verified = parseProviderToken(decoded);
-      if (verified) return verified;
+      if (verified) return applyOrgOverride(verified);
     }
   }
 
@@ -229,7 +258,7 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
     // If it's a signed token
     if (customHeader.includes('.')) {
       const verified = parseProviderToken(customHeader);
-      if (verified) return verified;
+      if (verified) return applyOrgOverride(verified);
     }
   }
 
@@ -239,7 +268,7 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
       userId: 'user-dev-uuid-001',
       email: 'dev@circuitsoul.com',
       name: 'Developer Admin (SME Owner)',
-      orgId: 'org-dev-uuid-100',
+      orgId: overrideOrgId ? overrideOrgId.trim() || 'org-dev-uuid-100' : 'org-dev-uuid-100',
       role: Role.OWNER
     };
   }
@@ -294,6 +323,75 @@ export async function switchOrganization(
   organizationId: string
 ): Promise<Role> {
   return verifyOrgMembership(userId, organizationId);
+}
+
+/**
+ * Hashes a session token for storage in the revocation table.
+ */
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * Revokes a session token by storing its hash in the RevokedSession table.
+ * The token is rendered invalid immediately.
+ */
+export async function revokeSession(token: string): Promise<void> {
+  if (!token || !token.includes('.')) return;
+
+  const tokenHash = hashToken(token);
+  const session = verifySessionToken(token);
+  if (!session) return;
+
+  await prisma.revokedSession.create({
+    data: {
+      tokenHash,
+      userId: session.userId,
+      expiresAt: new Date((session.exp || 0) * 1000)
+    }
+  });
+}
+
+/**
+ * Checks whether a session token has been revoked.
+ */
+export async function isSessionRevoked(token: string): Promise<boolean> {
+  if (!token || !token.includes('.')) return true;
+
+  const tokenHash = hashToken(token);
+  const revoked = await prisma.revokedSession.findUnique({
+    where: { tokenHash }
+  });
+  return !!revoked;
+}
+
+/**
+ * Refreshes a session token by issuing a new signed token with extended expiry.
+ * Revokes the old token and returns the new one.
+ */
+export async function refreshSession(token: string): Promise<string | null> {
+  if (!token || !token.includes('.')) return null;
+
+  const revoked = await isSessionRevoked(token);
+  if (revoked) return null;
+
+  const session = verifySessionToken(token);
+  if (!session) return null;
+
+  // Revoke the old token
+  await revokeSession(token);
+
+  // Issue a new token with the same context but extended expiry
+  return signSessionToken(
+    {
+      userId: session.userId,
+      email: session.email,
+      name: session.name,
+      orgId: session.orgId,
+      role: session.role
+    },
+    86400 * 7
+  );
 }
 
 /**

@@ -16,7 +16,9 @@
     "@circuitsoul/ui": "workspace:*",
     "@circuitsoul/auth": "workspace:*",
     "@circuitsoul/api-adapters": "workspace:*",
-    "@circuitsoul/ai": "workspace:*"
+    "@circuitsoul/ai": "workspace:*",
+    "@circuitsoul/db": "workspace:*",
+    "@circuitsoul/security": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

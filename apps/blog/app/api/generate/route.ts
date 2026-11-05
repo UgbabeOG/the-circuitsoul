@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server';
 import { aiService } from '@circuitsoul/ai';
-import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
+import { prisma, Role, assertOrganizationMembership, enforceEntitlement, recordUsage } from '@circuitsoul/db';
 import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
 
 export async function POST(request: Request) {
   try {
     const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
     await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
+
+    // Enforce entitlement before expensive AI operation
+    await enforceEntitlement(session.orgId, 'AI_GENERATION');
+
     const body = await request.json();
     const { topic, keywords } = body;
 
@@ -20,8 +24,8 @@ export async function POST(request: Request) {
     const keywordList = Array.isArray(keywords)
       ? keywords
       : typeof keywords === 'string'
-      ? keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
-      : ['NDPR', 'African SaaS', 'Cloud Security'];
+        ? keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
+        : ['NDPR', 'African SaaS', 'Cloud Security'];
 
     const content = await aiService.generateBlogDraft(topic, keywordList);
 
@@ -32,18 +36,17 @@ export async function POST(request: Request) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
 
-    await prisma.usageEvent.create({
-      data: {
-        organizationId: session.orgId,
-        userId: session.userId,
-        eventType: 'AI_GENERATION',
-        tokensUsed: wordCount * 2,
-        generationMs: 1450,
-        rawPayload: {
-          type: 'BLOG_CONTENT',
-          topic,
-          wordCount
-        }
+    await recordUsage({
+      organizationId: session.orgId,
+      subscriptionId: undefined,
+      userId: session.userId,
+      eventType: 'AI_GENERATION',
+      tokensUsed: wordCount * 2,
+      generationMs: 1450,
+      rawPayload: {
+        type: 'BLOG_CONTENT',
+        topic,
+        wordCount
       }
     });
 
@@ -77,6 +80,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: 'Unauthorized' },
         { status: 401 }
+      );
+    }
+    if (error instanceof Error && error.message.startsWith('EntitlementDenied')) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 403 }
       );
     }
 
