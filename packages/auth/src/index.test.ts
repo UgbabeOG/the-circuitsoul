@@ -15,6 +15,9 @@ import {
   parseSession,
   requireMembership,
   requirePermission,
+  requireActiveSession,
+  requireAuthenticatedOrg,
+  requireAuthenticatedPermission,
   requireRole,
   requireSession,
   signSessionToken,
@@ -203,5 +206,53 @@ test('organization membership checks verify DB-backed role membership', async ()
     assert.equal(resolved.role, Role.ADMIN);
   } finally {
     prisma.membership.findMany = originalFindMany;
+  }
+});
+
+test('active session guard rejects a token after it has been revoked', async () => {
+  const originalFindUnique = prisma.revokedSession.findUnique.bind(prisma.revokedSession);
+  const token = signSessionToken({
+    userId: 'user-revoked',
+    email: 'revoked@example.com',
+    orgId: 'org-revoked',
+    role: Role.ADMIN
+  });
+
+  try {
+    prisma.revokedSession.findUnique = (async () => ({ tokenHash: 'revoked' })) as typeof prisma.revokedSession.findUnique;
+    await assert.rejects(
+      () => requireActiveSession({ authorization: `Bearer ${token}` }),
+      /session has been revoked/
+    );
+  } finally {
+    prisma.revokedSession.findUnique = originalFindUnique;
+  }
+});
+
+test('authenticated org and permission guards use the current database role', async () => {
+  const originalMembershipFindUnique = prisma.membership.findUnique.bind(prisma.membership);
+  const originalRevokedFindUnique = prisma.revokedSession.findUnique.bind(prisma.revokedSession);
+  const token = signSessionToken({
+    userId: 'user-demoted',
+    email: 'demoted@example.com',
+    orgId: 'org-demoted',
+    role: Role.ADMIN
+  });
+  const headers = { authorization: `Bearer ${token}` };
+
+  try {
+    prisma.revokedSession.findUnique = (async () => null) as typeof prisma.revokedSession.findUnique;
+    prisma.membership.findUnique = (async () => ({ role: Role.MEMBER })) as typeof prisma.membership.findUnique;
+
+    const { session, role } = await requireAuthenticatedOrg(headers);
+    assert.equal(role, Role.MEMBER);
+    assert.equal(session.role, Role.MEMBER);
+    await assert.rejects(
+      () => requireAuthenticatedPermission(headers, Permission.MANAGE_WORKFLOWS),
+      /Requires manage workflows permission/
+    );
+  } finally {
+    prisma.membership.findUnique = originalMembershipFindUnique;
+    prisma.revokedSession.findUnique = originalRevokedFindUnique;
   }
 });

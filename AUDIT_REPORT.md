@@ -1,103 +1,135 @@
-# CircuitSoul co-founder audit
+# CircuitSoul co-founder technical audit
 
 **Reassessed:** 2026-11-05
-**Scope:** Current repository state, application APIs and dashboards, auth/tenant boundaries, adapters, persistence, tests, CI, and local deployment.
-**Verdict:** The monorepo is buildable and has a useful product skeleton, but it is not ready for customer data or production use. The top blockers are concrete cross-tenant exposure paths, an incomplete user-authentication lifecycle, and infrastructure/application data that is not consistently tenant-bound. Treat this as a pre-production prototype.
+**Scope:** All current GitHub branch heads, authentication and tenant boundaries, application APIs, external adapters, credential persistence, CI, tests, and local deployment.
+**Verdict:** **Not production-ready and not safe for customer data.** Local uncommitted changes mitigate several findings on the current checkout, but none have been pushed. The GitHub branch heads still contain the reported vulnerabilities; do not treat local fixes as deployed, merged, or production-verified.
 
-## What changed since the previous audit
+## Branch coverage
 
-The November 2 report is stale in several places:
+GitHub lists three unique branch heads. Two additional local branch names are aliases for `master`, not additional GitHub branches.
 
-- The auth package now verifies DB-backed org membership, supports explicit org selection, and has role/permission helpers.
-- Tenant-scoped DB helpers and isolation tests exist.
-- API adapters are used server-side by routes; the old claim that Shield and CloudOps pages call adapters directly from the browser is no longer accurate.
-- Mock engines are no longer enabled by the adapter package unless `USE_MOCK_ENGINES=true`.
-- CI exists, the current focused test suite passes, and all seven Turborepo build tasks pass.
-- The previous report's claims about the Clerk `default-org` fallback, absent CI, and the Shield page's missing export should not be used as current findings.
+| GitHub branch | Head | Result |
+|---|---|---|
+| `master` | `bd29b31` | P0 caller-controlled session header, unauthenticated Flow execution/toggle, and unauthenticated Ghost publishing. No sign-in/callback/refresh/logout routes at this tip. Branch unprotected. |
+| `stage1/security-foundation` | `007adb1` | Fixes the `master`-specific session/action bypasses but retains stale-role authorization and publicly exposed PostgreSQL/Redis configuration. Branch unprotected. |
+| `hardening/stage1-security-remediation` | `363a071` | Adds sign-in/callback and platform Admin surfaces, but has email-only session issuance, missing platform-admin authorization, stale-role authorization, ineffective revocation, and publicly exposed database/cache configuration. Branch unprotected. |
 
-## Current validation
+`feature/phase-1-foundation-and-shield` and `fix/security-auth-tenancy` locally point to the same commit as `master`. The remote heads remain at the hashes above. Only the current local working tree, based on `hardening/stage1-security-remediation`, was tested; older branch snapshots were not independently built. Branch-specific findings below describe the remote tips unless explicitly labeled local.
 
-- `npm test`: **17 tests passed**. These are focused auth and tenant-helper tests, largely using mocked Prisma methods; they do not prove multi-tenant API behavior against a real database or engine.
-- `npm run build`: **7/7 tasks passed**. This confirms compilation/buildability, not runtime integration, security, or product completeness.
-- `git ls-files` found no tracked `configs/docker-env` or `.env` file. The Docker env file is ignored, but Compose requires it; a clean checkout may not be able to start the engine stack without creating it.
-- The worktree already contained auth and Flow execution changes before this audit. Those were left untouched; build-generated `tsconfig` formatting and `next-env.d.ts` files were cleaned up.
+## Executive summary
 
-## Ranked findings
+### Critical blockers on GitHub
 
-### P0 — Do not expose to customer data
+1. **Identity spoofing and unauthenticated platform-wide data access** remain on the remote `hardening/stage1-security-remediation` head.
+2. **Forged-session header and unauthenticated Flow/Ghost operations** remain on remote `master`.
+3. **PostgreSQL and Redis exposure risks** remain on the remote stage1 and remediation heads.
+4. **No GitHub branch protections** are configured for the three unique branch heads.
 
-1. **Flow executions are not scoped to the user's organization.** The executions API validates that the caller belongs to an org, then passes an optional caller-provided `workflowId` to the shared n8n adapter. Without the query parameter, it requests engine-wide executions. The Flow workflow listing also returns the adapter's unscoped engine workflow list alongside org-scoped DB rows. Relevant files: `apps/flow/app/api/executions/route.ts`, `apps/flow/app/api/workflows/route.ts`.
+### Local remediation state
 
-2. **Shield vulnerability reads can bypass the asset authorization check.** `assetId` is optional on GET, and the route only checks asset ownership when it is supplied. The route then queries Wazuh using a caller-selected `agentId` (or a shared default), so any authenticated member can request engine vulnerability data without proving that the agent belongs to an authorized asset in that org. Relevant file: `apps/shield/app/api/vulnerabilities/route.ts`.
+The current working tree contains uncommitted fixes for email-only sign-in, Admin access, current-role authorization, revocation checks, Flow external-ID toggling, Compose network/auth settings, and cloud-credential decryption. The added unit tests and current local build pass. These changes have **not** been committed or pushed, and tests/builds do not establish live production security.
 
-3. **Shared Ghost posts are returned without tenant mapping.** The blog posts API returns the shared Ghost adapter's complete post list to every authenticated org member, while only the separate Prisma list is org/user filtered. Publishing likewise writes to one shared Ghost installation without an org boundary. Relevant files: `apps/blog/app/api/posts/route.ts`, `apps/blog/app/api/publish/route.ts`, `packages/api-adapters/src/ghost.ts`.
+### High-priority residual gaps
 
-4. **There is no complete production sign-in/session issuance path in this repo.** `signSessionToken` is only used by tests; there is no login/callback route or provider SDK wiring that establishes a verified user and issues the app session. Clerk verification is a token parser, not a complete provider integration. An externally trusted gateway could supply tokens, but that deployment contract is not implemented or documented end-to-end. Relevant file: `packages/auth/src/index.ts`; repository search found no app caller for `signSessionToken`.
+- Provider identity is still matched by verified email rather than a durable provider-subject link; production-grade issuer/audience/expiry and signing-key rotation requirements remain.
+- GitHub branch protection and pull-request CI coverage across release branches remain unaddressed.
+- Docker Compose could not be validated because the Docker CLI is unavailable in this environment.
+- Credential backfill, plaintext-field retirement, key rotation/recovery, and live integration validation remain incomplete.
+- Route-level cross-tenant coverage, clean migration/release verification, engine health checks, and operational readiness remain incomplete.
 
-### P1 — Fix before a usable beta
+## Branch findings
 
-5. **Membership role checks have incompatible semantics and break legitimate access.** `assertOrganizationMembership` compares the DB role by exact inclusion. Many view routes pass `[Role.MEMBER]`, which rejects OWNER and ADMIN. Conversely, asset and workflow-management routes first require ADMIN/OWNER permission from the session but then also pass `[Role.MEMBER]` to the DB helper, rejecting those authorized roles too. Some endpoint combinations therefore deny all users. Define minimum-role/hierarchy semantics or pass the correct allowed roles consistently, and derive authorization from the DB membership role.
+### P0 — Do not deploy the affected remote branch
 
-6. **Flow persistence is not mapped to the external workflow.** Workflow creation persists an internal DB ID without storing the adapter's external n8n ID. Execution looks up an org-scoped DB workflow but passes that internal ID to n8n. The adapter needs a durable external-ID mapping and tenant-safe execution lookup. Relevant files: `apps/flow/app/api/workflows/route.ts`, `apps/flow/app/api/workflows/[id]/execute/route.ts`, `packages/db/prisma/schema.prisma`.
+1. **Email-only sign-in can impersonate users — remote `hardening/stage1-security-remediation`.** Its sign-in/callback flow can create a session without proving ownership of the supplied email. The local uncommitted change blocks custom email-only login and requires a signed provider token with verified email and database membership. It does not yet provide durable provider-subject linking or full production-grade issuer/audience/expiry/key-rotation guarantees. Files: [sign-in route](./apps/web/app/api/auth/signin/route.ts), [callback route](./apps/web/app/api/auth/callback/route.ts).
 
-7. **Active-org switching is not a user-facing lifecycle.** A header can select an org and DB membership is checked on protected routes, but there is no API/UI flow to list memberships, select an org, or refresh trusted session context. `switchOrganization` is only a helper, not an app endpoint or provider callback.
+2. **Platform Admin data is unauthenticated — remote `hardening/stage1-security-remediation`.** The branch exposes global Admin data without a platform-admin check. The local uncommitted change applies a server-side exact-email allowlist and guards the Admin page and global-data APIs; tenant OWNER/ADMIN does not grant platform access. Configure `CIRCUITSOUL_PLATFORM_ADMIN_EMAILS` only on the Admin server. File: [platform-admin guard](./apps/admin/lib/platform-admin.ts).
 
-8. **Clerk JWT validation is incomplete.** Signature verification and an expiry check exist, but the code does not require `exp` or validate issuer/audience (and does not use a provider SDK/JWKS rotation path). Role claims are also consumed by route permission checks before the DB role is consulted. Complete provider-specific token validation and use current DB membership role for authorization. Relevant file: `packages/auth/src/index.ts`.
+3. **Forged session and unauthenticated server actions — remote `master` and aliases.** The master tip trusts a caller-controlled `x-circuitsoul-session` header and allows unauthenticated Flow execution/toggle and Ghost publishing. Later hardened branch code addresses these paths, but the fixes are not on remote `master`; do not deploy it. Files: [auth package](./packages/auth/src/index.ts), [Flow execute route](./apps/flow/app/api/workflows/%5Bid%5D/execute/route.ts), [Flow toggle route](./apps/flow/app/api/workflows/%5Bid%5D/toggle/route.ts), [Blog publish route](./apps/blog/app/api/publish/route.ts).
 
-9. **Cloud metrics are not bound to an org-owned environment.** Any authenticated org member can supply an arbitrary `hostId`; absent one, the route queries a shared hard-coded host. There is no lookup proving that the host/environment belongs to the selected org. Relevant file: `apps/cloudops/app/api/metrics/route.ts`.
+### P1 — Required before beta
 
-10. **Cloud credentials remain plaintext-capable.** The schema still has required `credentialsJson` plaintext alongside optional encrypted fields. Encryption helpers exist, but no migration or API integration was verified that encrypts on write and decrypts only for server-side engine calls. Relevant files: `packages/db/prisma/schema.prisma`, `packages/security/src/encryption.ts`.
+4. **Stale role claims and ineffective revocation — remote stage1/remediation heads.** Token roles can be stale and revoked tokens can remain valid on protected requests. Local uncommitted auth changes require active sessions, check current database membership roles, reject revoked sessions on async protected API guards, and refresh using the current role. This does not put those controls on GitHub or prove every route/integration path is covered.
 
-11. **AI outages silently produce fabricated output.** The AI service returns mock content when the key is absent, a request fails, or the provider returns no content. In remediation and cloud optimization flows, this can be mistaken for real security or cost advice. Make mock mode explicit and visibly label provenance; production should surface provider failures. Relevant file: `packages/ai/src/index.ts`.
+5. **Incomplete provider identity verification and linking.** The local callback requires a signed provider token and verified email, but still relies on email-to-user matching rather than a durable provider-subject mapping. Required issuer/audience/expiry validation and rotation-capable key verification are not fully established. File: [callback route](./apps/web/app/api/auth/callback/route.ts).
 
-12. **CI can report success while important checks fail.** The workflow uses `|| true` for lint, Prisma migration status, and dependency audit; the root `test` script includes tenant tests, but CI runs only `test:auth`. Relevant file: `.github/workflows/ci.yml`.
+6. **Flow status toggle mapping — remote remediation head.** The local change resolves the organization-owned workflow and passes its external n8n ID to the adapter; an absent external mapping fails instead of silently using the internal ID. File: [Flow toggle route](./apps/flow/app/api/workflows/%5Bid%5D/toggle/route.ts).
 
-13. **No production migration history or deployment procedure.** No Prisma migrations are tracked; README onboarding still directs operators to `prisma db push`. This is not a safe schema-evolution process for production. Relevant files: `packages/db/prisma/schema.prisma`, `README.md`.
+7. **PostgreSQL/Redis network exposure — remote stage1/remediation heads.** The local Compose change binds published ports to loopback, requires database/cache passwords, and enables Redis authentication. Compose syntax/interpolation and runtime health checks remain unverified because Docker is unavailable. File: [Docker Compose](./infra/docker-compose.yml).
 
-### P2 — Product and operating readiness
+8. **Credential persistence and key lifecycle.** A local fix now verifies the stored IV metadata against the AES-GCM blob and decrypts using the embedded IV/tag/ciphertext format; regression tests cover round-trip, tampering, and mismatched IV metadata. Backfill/removal of plaintext storage, key rotation/recovery, and live integration migration remain open. File: [credential encryption](./packages/security/src/encryption.ts).
 
-14. **Admin dashboard is entirely local demo state.** Tenant records, audit logs, engine status, and the mock toggle are React state; the toggle does not change server adapter configuration. It must not be presented as a real control plane. Relevant file: `apps/admin/app/page.tsx`.
+9. **GitHub protections and CI scope.** All three unique GitHub branches are unprotected, and the workflow PR filter targets only `master`. Configure required reviews/status checks and ensure relevant PR checks cover each protected/release branch.
 
-15. **Billing and entitlements are not operational.** Schema models exist, but there is no verified payment-provider lifecycle or enforcement of plan features/quotas at API boundaries.
+10. **Organization lifecycle and cross-tenant route coverage.** Invitation/provisioning/removal, audit events, session invalidation, onboarding, and route-level same-org success/cross-org denial tests are incomplete. Existing configured tests emphasize helper behavior and mocks.
 
-16. **Product integrations need ownership boundaries and failure contracts.** Shared n8n, Wazuh, Prometheus, and Ghost adapters exist, but app resources are not consistently mapped to tenant-owned engine resources. Engine outages should fail explicitly rather than silently produce demo data.
+### P2 — Production and product readiness
 
-17. **Local deployment is not reproducible from a fresh checkout.** `infra/docker-compose.yml` references an ignored `configs/docker-env` file and uses floating `latest` images; the Wazuh image is old. Add a committed safe example, pin supported image versions, and define health/readiness and secret provisioning.
+11. **Live engine health is not established by the Admin dashboard.** Configuration/mock-mode labels are not evidence of live reachability. Add bounded health checks and explicit unknown/unavailable states.
 
-18. **Test coverage is not yet a production gate.** There are no API integration tests exercising cross-org requests end-to-end, external adapter contract tests, browser journeys, or lifecycle tests for auth and membership changes.
+12. **Ghost publication ownership is unresolved.** The app publishes to a shared Ghost installation. Decide whether this is intentionally a common destination and enforce the corresponding tenant ownership/visibility model.
 
-## Recommended completion sequence
+13. **Production operations are not demonstrated.** Document and test ingress/network boundaries, secret provisioning and rotation, backups/restore, monitoring/alerts, incident response, data retention, and supported engine versions.
 
-### Gate 0 — Tenant isolation and authorization
+14. **Migration release flow needs proof.** Validate clean-database deployment and upgrades from a previous schema in CI using the actual deployment migration path.
 
-- Scope Flow executions and workflow lists to org-owned DB records; never expose global adapter results.
-- Require a valid, org-owned asset/agent association on every Shield vulnerability read and scan.
-- Decide whether Ghost is a shared publication target or tenant-isolated. Do not return shared content to every tenant by default.
-- Fix role hierarchy/allowed-role semantics and make DB membership role authoritative.
-- Bind CloudOps `hostId` to an org-owned `CloudEnvironment`.
-- Add API-level regression tests proving cross-org requests are denied and same-org requests work.
+15. **Billing and entitlements are incomplete.** Verify checkout, signed/idempotent webhooks, cancellation/renewal, and consistent quota enforcement end-to-end before charging customers.
 
-### Gate 1 — Real identity and membership lifecycle
+## Local uncommitted remediation
 
-- Select and implement a complete identity-provider contract: sign-in/callback, issuer/audience/key rotation, session issuance/refresh/revocation, and logout.
-- Add membership listing and active-org selection backed by DB membership checks.
-- Add provisioning/invitation/removal lifecycle, with owner/admin authorization and audit events.
-- Test org switching, revoked membership, stale role claims, expired tokens, and missing provider claims.
+The current local worktree is `hardening/stage1-security-remediation` tracking `origin/hardening/stage1-security-remediation`; all changes below remain uncommitted:
 
-### Gate 2 — Secure persistence and honest integrations
+- Block email-only sign-in and require a signed provider token with verified email and active database membership for callback session creation.
+- Add a fail-closed platform-admin allowlist for the Admin page and its global-data APIs.
+- Enforce active-session/revocation checks and database-current roles in protected async API authorization; refresh with the current role.
+- Fix Flow toggle to use the stored external workflow ID.
+- Bind Compose-published ports to loopback, require PostgreSQL/Redis passwords, and enable Redis authentication; document local setup.
+- Correct cloud credential decryption metadata validation and add AES-GCM round-trip/tamper regression coverage.
 
-- Migrate plaintext cloud credentials to encrypted storage; remove plaintext write paths and define key rotation/backup recovery.
-- Make AI and adapter mock behavior explicitly development-only; return errors in production rather than success-shaped mock output.
-- Store external engine IDs against org-owned records; validate all provider calls through that mapping.
-- Add per-org usage/entitlement enforcement before paid or expensive operations.
+These are local mitigations only. They are not present on GitHub branch tips and are not evidence that production is secure.
+
+## Validation
+
+- `pnpm test`: **35 passed, 0 failed** (auth, identity/Admin policy, tenant-isolation, API, and credential-encryption tests).
+- `pnpm build`: **7/7 workspace tasks successful**.
+- `pnpm lint`: command exited successfully, but Turbo found no lint tasks configured; this is not lint coverage.
+- `git diff --check`: passed.
+- Docker Compose validation: **not run**; `docker` is unavailable.
+- Live Clerk/JWKS behavior, real PostgreSQL tenant isolation, live engine behavior, deployment network boundaries, migrations, backup/restore, and production configuration were not verified.
+- No changes have been committed, pushed, or deployed. These checks do not establish production readiness.
+
+## Recommended next steps
+
+### Gate 0 — Get reviewed fixes onto the intended release branch
+
+1. Review and test the current uncommitted remediation, then commit and push it through the normal protected-branch review flow.
+2. Port the hardened session parsing and authenticated/authorized Flow and Ghost operations to `master`, or retire/block `master` and aliases from deployment.
+3. Configure GitHub protections and required CI on all protected/release branches; update pull-request workflow filters.
+4. Keep production/customer data disabled until P0 fixes are present on the actual release branch and reviewed.
+
+### Gate 1 — Close identity and tenant lifecycle gaps
+
+1. Use rotation-capable provider verification with required issuer, audience, expiry, state/nonce checks as applicable.
+2. Link provider subject to an internal user ID and define secure account provisioning and linking.
+3. Add route-level tests for unauthenticated access, non-admin access, role downgrade, revocation, same-org success, and cross-org denial across apps/adapters.
+4. Complete membership invitation, removal, audit trail, session invalidation, and organization onboarding.
+
+### Gate 2 — Secure persistence and integrations
+
+1. Backfill encrypted cloud credentials, remove plaintext storage, and document key rotation/recovery.
+2. Validate Compose/network configuration and live service health checks in a Docker-capable staging environment.
+3. Define Ghost publication ownership and enforce org-scoped resources at every integration boundary.
 
 ### Gate 3 — Launch readiness
 
-- Create and test Prisma migrations; remove `db push` from production instructions.
-- Make CI enforce lint, typecheck, unit/integration tests, dependency scans, and production builds (no `|| true`).
-- Pin deployment images; document secrets, backups/restore, health checks, alerts, incident response, and data retention.
-- Complete user-facing onboarding, org switching, operational admin pages, and end-to-end journeys.
+1. Validate clean migration deployment and upgrades in CI.
+2. Document and rehearse secret rotation, backup/restore, monitoring, incident response, retention, and supported versions.
+3. Complete billing/webhooks/quotas and staging verification with at least two organizations across all routes/adapters.
+
+## Reusable implementation prompt
+
+See [COFOUNDER_AUDIT_NEXT_STEPS_PROMPT.md](./docs/COFOUNDER_AUDIT_NEXT_STEPS_PROMPT.md) for a copy-ready prompt that delegates the remaining remediation work.
 
 ## Completion criteria
 
-Do not call the app production-complete until all P0 findings are closed, P1 gates are implemented, CI runs the relevant security and integration suites as blocking checks, and staging tests demonstrate two separate organizations cannot read or mutate each other's resources across every app and external adapter.
+Do not call the service production-ready until P0 fixes are on the actual GitHub release branch, stale branches cannot be deployed accidentally, identity and tenant controls have route-level negative tests, branch protection/CI and migration gates are verified, and staging evidence proves that separate organizations cannot read or mutate each other's resources across every app and external adapter.

@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
-import { prisma, Role, assertOrganizationMembership, enforceEntitlement, recordUsage } from '@circuitsoul/db';
-import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
+import { prisma, enforceEntitlement, recordUsage } from '@circuitsoul/db';
+import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.MANAGE_WORKFLOWS);
-    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.MANAGE_WORKFLOWS
+    );
 
     // Enforce entitlement before workflow execution
     await enforceEntitlement(session.orgId, 'WORKFLOW_EXECUTION');
@@ -77,6 +79,9 @@ export async function POST(
         { success: false, error: 'Unauthorized' },
         { status: 401 }
       );
+    }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
     if (error instanceof Error && error.message.startsWith('EntitlementDenied')) {
       return NextResponse.json(

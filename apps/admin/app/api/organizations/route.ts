@@ -1,20 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requireAuthenticatedOrg } from '@circuitsoul/auth';
-import { prisma, Role } from '@circuitsoul/db';
+import { prisma } from '@circuitsoul/db';
+import { requirePlatformAdmin } from '../../../lib/platform-admin';
 
 export async function GET(request: Request) {
   try {
-    const { session } = await requireAuthenticatedOrg(
-      Object.fromEntries(request.headers.entries())
-    );
-
-    // Only owners and admins can view all organizations
-    if (session.role !== 'OWNER' && session.role !== 'ADMIN') {
-      return NextResponse.json(
-        { success: false, error: 'Forbidden: Requires OWNER or ADMIN role' },
-        { status: 403 }
-      );
-    }
+    await requirePlatformAdmin(Object.fromEntries(request.headers.entries()));
 
     const organizations = await prisma.organization.findMany({
       select: {
@@ -24,15 +14,15 @@ export async function GET(request: Request) {
         logoUrl: true,
         createdAt: true,
         updatedAt: true,
-            _count: {
-              select: {
-                memberships: true,
-                assets: true,
-                environments: true,
-                workflows: true,
-                aiGenerations: true
-              }
+        _count: {
+            select: {
+              memberships: true,
+              assets: true,
+              environments: true,
+              workflows: true,
+              aiGenerations: true
             }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -60,11 +50,11 @@ export async function GET(request: Request) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
-    if (error instanceof Error && error.message.startsWith('TenantAccessDenied')) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to fetch organizations' },
+      { success: false, error: 'Failed to fetch organizations' },
       { status: 500 }
     );
   }

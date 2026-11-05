@@ -80,17 +80,19 @@ export function decryptCloudCredentials(
   credentialsEncrypted: string,
   credentialsIv: string
 ): string {
-  // Reconstruct the combined format (iv + tag + ciphertext) for decryptCredential
-  const iv = Buffer.from(credentialsIv, 'base64url');
   const combined = Buffer.from(credentialsEncrypted, 'base64url');
+  const iv = Buffer.from(credentialsIv, 'base64url');
 
-  // combined = iv (16) + tag (16) + ciphertext
-  const tag = combined.subarray(0, 16);
-  const ciphertext = combined.subarray(16);
+  if (iv.length !== 16 || combined.length < 32) {
+    throw new Error('Encrypted cloud credentials are malformed');
+  }
 
-  // Rebuild: iv + tag + ciphertext
-  const full = Buffer.concat([iv, tag, ciphertext]);
-  return decryptCredential(full.toString('base64url'));
+  const embeddedIv = combined.subarray(0, 16);
+  if (!crypto.timingSafeEqual(iv, embeddedIv)) {
+    throw new Error('Encrypted cloud credential IV does not match stored metadata');
+  }
+
+  return decryptCredential(credentialsEncrypted);
 }
 
 export const encryptionKeyId = 'circuitsoul-v1';

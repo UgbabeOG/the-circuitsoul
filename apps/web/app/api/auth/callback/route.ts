@@ -1,95 +1,108 @@
 import { NextResponse } from 'next/server';
 import { parseProviderToken, signSessionToken } from '@circuitsoul/auth';
-import { prisma, Role } from '@circuitsoul/db';
+import { prisma } from '@circuitsoul/db';
+
+function getVerifiedEmail(token: string): string | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
+      email?: unknown;
+      email_verified?: unknown;
+    };
+
+    if (
+      typeof payload.email !== 'string' ||
+      payload.email.trim() === '' ||
+      payload.email_verified !== true
+    ) {
+      return null;
+    }
+
+    return payload.email.trim();
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const token = searchParams.get('token');
-    const email = searchParams.get('email');
 
-    if (!token && !email) {
+    if (!token) {
       return NextResponse.json(
-        { success: false, error: 'No token or email provided' },
-        { status: 400 }
+        { success: false, error: 'A verified provider token is required' },
+        { status: 401 }
       );
     }
 
-    let session: { userId: string; email: string; name?: string; orgId: string; role: string } | null = null;
-
-    if (token) {
-      // Verify the provider token (Clerk JWT or custom session)
-      const verified = parseProviderToken(token);
-      if (!verified) {
-        return NextResponse.json(
-          { success: false, error: 'Invalid or expired token' },
-          { status: 401 }
-        );
-      }
-      session = {
-        userId: verified.userId,
-        email: verified.email,
-        name: verified.name,
-        orgId: verified.orgId,
-        role: verified.role
-      };
-    } else if (email) {
-      // Custom provider email-based sign-in
-      let user = await prisma.user.findUnique({ where: { email } });
-      if (!user) {
-        user = await prisma.user.create({
-          data: { email, name: email.split('@')[0] }
-        });
-      }
-
-      const memberships = await prisma.membership.findMany({
-        where: { userId: user.id },
-        include: { organization: true }
-      });
-
-      if (memberships.length === 0) {
-        return NextResponse.json(
-          { success: false, error: 'No organization memberships found for this user' },
-          { status: 403 }
-        );
-      }
-
-      const defaultOrg = memberships[0];
-      session = {
-        userId: user.id,
-        email: user.email,
-        name: user.name || undefined,
-        orgId: defaultOrg.organizationId,
-        role: defaultOrg.role
-      };
+    if ((process.env.AUTH_PROVIDER || 'custom').toLowerCase() !== 'clerk') {
+      return NextResponse.json(
+        { success: false, error: 'Verified provider sign-in is not configured' },
+        { status: 503 }
+      );
     }
 
-    if (!session) {
+    const verified = parseProviderToken(token);
+    const email = getVerifiedEmail(token);
+    if (!verified || !email) {
       return NextResponse.json(
-        { success: false, error: 'Authentication failed' },
-        { status: 500 }
+        { success: false, error: 'Invalid or unverified provider token' },
+        { status: 401 }
+      );
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'No matching account found' },
+        { status: 403 }
+      );
+    }
+
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: user.id,
+          organizationId: verified.orgId
+        }
+      },
+      include: { organization: true }
+    });
+
+    if (!membership) {
+      return NextResponse.json(
+        { success: false, error: 'No membership found for this account and organization' },
+        { status: 403 }
       );
     }
 
     const tokenString = signSessionToken({
-      userId: session.userId,
-      email: session.email,
-      name: session.name,
-      orgId: session.orgId,
-      role: session.role as Role
+      userId: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      orgId: membership.organizationId,
+      role: membership.role
     });
 
     const response = NextResponse.json({
       success: true,
       token: tokenString,
       user: {
-        id: session.userId,
-        email: session.email,
-        name: session.name
+        id: user.id,
+        email: user.email,
+        name: user.name
       },
       organization: {
-        id: session.orgId,
-      role: session.role as Role
+        id: membership.organizationId,
+        name: membership.organization.name,
+        slug: membership.organization.slug,
+        role: membership.role
       }
     });
 
@@ -102,9 +115,9 @@ export async function GET(request: Request) {
     });
 
     return response;
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error.message || 'Callback failed' },
+      { success: false, error: 'Callback failed' },
       { status: 500 }
     );
   }

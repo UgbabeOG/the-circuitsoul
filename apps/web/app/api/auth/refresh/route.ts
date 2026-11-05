@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { parseSession, refreshSession } from '@circuitsoul/auth';
+import { getSessionToken, parseSession, refreshSession, verifySessionToken } from '@circuitsoul/auth';
 
 export async function POST(request: Request) {
   try {
@@ -13,22 +13,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Extract the current token
-    const authHeader = headers['authorization'] || headers['Authorization'];
-    let token: string | null = null;
-
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      token = authHeader.replace('Bearer ', '').trim();
-    } else {
-      const cookieHeader = headers['cookie'] || headers['Cookie'];
-      if (cookieHeader) {
-        const match = cookieHeader.match(/circuitsoul_session=([^;]+)/);
-        if (match && match[1]) {
-          token = decodeURIComponent(match[1]);
-        }
-      }
-    }
-
+    const token = getSessionToken(headers);
     if (!token) {
       return NextResponse.json(
         { success: false, error: 'No session token found' },
@@ -44,17 +29,22 @@ export async function POST(request: Request) {
       );
     }
 
+    const refreshedSession = verifySessionToken(newToken);
+    if (!refreshedSession) {
+      throw new Error('Failed to validate refreshed session');
+    }
+
     const response = NextResponse.json({
       success: true,
       token: newToken,
       user: {
-        id: session.userId,
-        email: session.email,
-        name: session.name
+        id: refreshedSession.userId,
+        email: refreshedSession.email,
+        name: refreshedSession.name
       },
       organization: {
-        id: session.orgId,
-        role: session.role
+        id: refreshedSession.orgId,
+        role: refreshedSession.role
       }
     });
 

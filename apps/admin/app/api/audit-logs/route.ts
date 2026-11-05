@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { requireAuthenticatedOrg } from '@circuitsoul/auth';
-import { prisma } from '@circuitsoul/db';
 import { z } from 'zod';
+import { prisma } from '@circuitsoul/db';
+import { requirePlatformAdmin } from '../../../lib/platform-admin';
 
 const AuditLogsQuerySchema = z.object({
   limit: z.string().optional().default('50'),
@@ -12,17 +12,7 @@ const AuditLogsQuerySchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const { session } = await requireAuthenticatedOrg(
-      Object.fromEntries(request.headers.entries())
-    );
-
-    // Only owners and admins can view audit logs
-    if (session.role !== 'OWNER' && session.role !== 'ADMIN') {
-      return NextResponse.json(
-        { success: false, error: 'Forbidden: Requires OWNER or ADMIN role' },
-        { status: 403 }
-      );
-    }
+    await requirePlatformAdmin(Object.fromEntries(request.headers.entries()));
 
     const { searchParams } = new URL(request.url);
     const parsed = AuditLogsQuerySchema.safeParse({
@@ -74,11 +64,11 @@ export async function GET(request: Request) {
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
-    if (error instanceof Error && error.message.startsWith('TenantAccessDenied')) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to fetch audit logs' },
+      { success: false, error: 'Failed to fetch audit logs' },
       { status: 500 }
     );
   }

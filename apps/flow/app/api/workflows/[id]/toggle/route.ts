@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
-import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
-import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
+import { prisma } from '@circuitsoul/db';
+import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.MANAGE_WORKFLOWS);
-    await assertOrganizationMembership(session.userId, session.orgId, [Role.ADMIN, Role.OWNER]);
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.MANAGE_WORKFLOWS
+    );
     const workflowId = params.id;
     const body = await request.json();
     const newStatus: 'ACTIVE' | 'INACTIVE' = body.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
@@ -25,7 +27,17 @@ export async function POST(
       );
     }
 
-    const result = await flowAdapter.toggleWorkflowStatus(workflowId, newStatus);
+    if (!existingWorkflow.externalWorkflowId) {
+      return NextResponse.json(
+        { success: false, error: 'Workflow has no external engine mapping; cannot toggle status' },
+        { status: 400 }
+      );
+    }
+
+    const result = await flowAdapter.toggleWorkflowStatus(
+      existingWorkflow.externalWorkflowId,
+      newStatus
+    );
 
     await prisma.flowWorkflow.updateMany({
       where: { id: workflowId, organizationId: session.orgId },
@@ -42,6 +54,9 @@ export async function POST(
         { success: false, error: 'Unauthorized' },
         { status: 401 }
       );
+    }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
 
     return NextResponse.json(

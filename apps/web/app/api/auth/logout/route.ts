@@ -1,31 +1,12 @@
 import { NextResponse } from 'next/server';
-import { parseSession, revokeSession } from '@circuitsoul/auth';
+import { getSessionToken, revokeSession } from '@circuitsoul/auth';
 
 export async function POST(request: Request) {
   try {
     const headers = Object.fromEntries(request.headers.entries());
-    const session = parseSession(headers);
-
-    if (session) {
-      // Extract the token from the Authorization header or cookie
-      const authHeader = headers['authorization'] || headers['Authorization'];
-      let token: string | null = null;
-
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        token = authHeader.replace('Bearer ', '').trim();
-      } else {
-        const cookieHeader = headers['cookie'] || headers['Cookie'];
-        if (cookieHeader) {
-          const match = cookieHeader.match(/circuitsoul_session=([^;]+)/);
-          if (match && match[1]) {
-            token = decodeURIComponent(match[1]);
-          }
-        }
-      }
-
-      if (token) {
-        await revokeSession(token);
-      }
+    const token = getSessionToken(headers);
+    if (token) {
+      await revokeSession(token);
     }
 
     const response = NextResponse.json({ success: true, message: 'Logged out' });

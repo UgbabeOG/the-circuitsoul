@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
-import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
-import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
+import { prisma } from '@circuitsoul/db';
+import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 
 export async function GET(request: Request) {
   try {
-    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
-    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.VIEW_ORG
+    );
 
     const dbPosts = await prisma.blogPost.findMany({
       where: {
@@ -26,6 +28,9 @@ export async function GET(request: Request) {
         { success: false, error: 'Unauthorized' },
         { status: 401 }
       );
+    }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
 
     return NextResponse.json(

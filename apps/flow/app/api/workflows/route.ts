@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
-import { prisma, Role, assertOrganizationMembership } from '@circuitsoul/db';
-import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
+import { prisma } from '@circuitsoul/db';
+import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 
 export async function GET(request: Request) {
   try {
-    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.VIEW_ORG);
-    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.VIEW_ORG
+    );
 
     const dbWorkflows = await prisma.flowWorkflow.findMany({
       where: { organizationId: session.orgId },
@@ -27,6 +29,9 @@ export async function GET(request: Request) {
         { status: 401 }
       );
     }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
+    }
 
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to fetch workflows' },
@@ -37,8 +42,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.MANAGE_WORKFLOWS);
-    await assertOrganizationMembership(session.userId, session.orgId, [Role.MEMBER]);
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.MANAGE_WORKFLOWS
+    );
     const body = await request.json();
 
     if (!body.name) {
@@ -56,7 +63,7 @@ export async function POST(request: Request) {
       triggerType: body.triggerType
     });
 
-    const externalWorkflowId = (newWorkflow as any)?.id || null;
+    const externalWorkflowId = newWorkflow?.id || null;
 
     const dbRecord = await prisma.flowWorkflow.create({
       data: {
@@ -81,6 +88,9 @@ export async function POST(request: Request) {
         { success: false, error: 'Unauthorized' },
         { status: 401 }
       );
+    }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
 
     return NextResponse.json(

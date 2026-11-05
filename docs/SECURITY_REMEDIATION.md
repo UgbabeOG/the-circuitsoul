@@ -1,5 +1,23 @@
 # CircuitSoul Security Remediation Report
 
+## Platform Admin dashboard access
+
+The Admin app displays platform-wide organization, user, environment, workflow,
+assessment, and activity data. It requires a valid CircuitSoul session and an
+exact email match in the server-only `CIRCUITSOUL_PLATFORM_ADMIN_EMAILS`
+environment variable. Configure it as a comma-separated list, for example:
+
+```dotenv
+CIRCUITSOUL_PLATFORM_ADMIN_EMAILS="ops-admin@example.com,security-admin@example.com"
+```
+
+Do not use tenant `OWNER` or `ADMIN` roles as platform-admin grants. If the
+variable is unset or empty, all users are denied access. The dashboard renders
+a not-found response to unauthorized requests; its global-data APIs return
+`401 Unauthorized` for missing/invalid sessions and `403 Forbidden` for
+authenticated users outside the allowlist. Keep this variable in the server
+environment only; do not expose it through a `NEXT_PUBLIC_` variable.
+
 **Branch:** `hardening/stage1-security-remediation`
 **Date:** 2026-11-02
 

@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import { blogAdapter } from '@circuitsoul/api-adapters';
-import { prisma, Role, assertOrganizationMembership, enforceEntitlement, recordUsage } from '@circuitsoul/db';
-import { Permission, requirePermission, requireSession } from '@circuitsoul/auth';
+import { prisma, enforceEntitlement, recordUsage } from '@circuitsoul/db';
+import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 
 export async function POST(request: Request) {
   try {
-    const session = requirePermission(requireSession(Object.fromEntries(request.headers.entries())), Permission.PUBLISH_CONTENT);
-    await assertOrganizationMembership(session.userId, session.orgId, [Role.ADMIN, Role.OWNER]);
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.PUBLISH_CONTENT
+    );
 
     // Enforce entitlement before publishing
     await enforceEntitlement(session.orgId, 'BLOG_PUBLICATION');
@@ -111,6 +113,9 @@ export async function POST(request: Request) {
         { success: false, error: 'Unauthorized' },
         { status: 401 }
       );
+    }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
     if (error instanceof Error && error.message.startsWith('EntitlementDenied')) {
       return NextResponse.json(

@@ -1,4 +1,7 @@
+import { headers } from 'next/headers';
+import { notFound } from 'next/navigation';
 import { prisma } from '@circuitsoul/db';
+import { requirePlatformAdmin } from '../lib/platform-admin';
 import AdminDashboardClient from './_components/dashboard';
 
 interface AdminDashboardProps {
@@ -36,6 +39,12 @@ interface AdminDashboardProps {
 }
 
 export default async function AdminPage() {
+  try {
+    await requirePlatformAdmin(Object.fromEntries(headers().entries()));
+  } catch {
+    notFound();
+  }
+
   let organizations: AdminDashboardProps['organizations'] = [];
   let system: AdminDashboardProps['system'] = {
     organizations: 0,

@@ -284,6 +284,39 @@ export function requireSession(headers: Record<string, string | undefined>): Use
   return session;
 }
 
+export function getSessionToken(headers: Record<string, string | undefined>): string | null {
+  const authHeader = headers['authorization'] || headers['Authorization'];
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (parseProviderToken(token)) return token;
+  }
+
+  const cookieHeader = headers['cookie'] || headers['Cookie'];
+  const match = cookieHeader?.match(/circuitsoul_session=([^;]+)/);
+  if (match?.[1]) {
+    const token = decodeURIComponent(match[1]);
+    if (parseProviderToken(token)) return token;
+  }
+
+  const customHeader = headers['x-circuitsoul-session'];
+  if (customHeader?.includes('.') && parseProviderToken(customHeader)) {
+    return customHeader;
+  }
+
+  return null;
+}
+
+export async function requireActiveSession(
+  headers: Record<string, string | undefined>
+): Promise<UserSession> {
+  const session = requireSession(headers);
+  const token = getSessionToken(headers);
+  if (token && await isSessionRevoked(token)) {
+    throw new Error('Unauthorized: session has been revoked');
+  }
+  return session;
+}
+
 /**
  * Verifies that the session user is an active member of the given organization
  * against the database Membership table. Never trusts client-supplied org IDs.
@@ -340,11 +373,13 @@ export async function revokeSession(token: string): Promise<void> {
   if (!token || !token.includes('.')) return;
 
   const tokenHash = hashToken(token);
-  const session = verifySessionToken(token);
+  const session = parseProviderToken(token);
   if (!session) return;
 
-  await prisma.revokedSession.create({
-    data: {
+  await prisma.revokedSession.upsert({
+    where: { tokenHash },
+    update: {},
+    create: {
       tokenHash,
       userId: session.userId,
       expiresAt: new Date((session.exp || 0) * 1000)
@@ -378,17 +413,28 @@ export async function refreshSession(token: string): Promise<string | null> {
   const session = verifySessionToken(token);
   if (!session) return null;
 
+  const membership = await prisma.membership.findUnique({
+    where: {
+      userId_organizationId: {
+        userId: session.userId,
+        organizationId: session.orgId
+      }
+    },
+    select: { role: true }
+  });
+  if (!membership) return null;
+
   // Revoke the old token
   await revokeSession(token);
 
-  // Issue a new token with the same context but extended expiry
+  // Issue a new token with current membership privileges and extended expiry
   return signSessionToken(
     {
       userId: session.userId,
       email: session.email,
       name: session.name,
       orgId: session.orgId,
-      role: session.role
+      role: membership.role
     },
     86400 * 7
   );
@@ -402,9 +448,17 @@ export async function refreshSession(token: string): Promise<string | null> {
 export async function requireAuthenticatedOrg(
   headers: Record<string, string | undefined>
 ): Promise<{ session: UserSession; role: Role }> {
-  const session = requireSession(headers);
+  const session = await requireActiveSession(headers);
   const role = await verifyOrgMembership(session.userId, session.orgId);
-  return { session, role };
+  return { session: { ...session, role }, role };
+}
+
+export async function requireAuthenticatedPermission(
+  headers: Record<string, string | undefined>,
+  permission: Permission
+): Promise<UserSession> {
+  const { session } = await requireAuthenticatedOrg(headers);
+  return requirePermission(session, permission);
 }
 
 export function checkRole(session: UserSession | null, requiredRoles: Role[]): boolean {

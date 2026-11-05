@@ -26,7 +26,9 @@
    ```
 
 3. **Edit `.env`** with your local values. All `CHANGE_ME_*` values must be replaced:
-   - `DATABASE_URL` — PostgreSQL connection string
+   - `POSTGRES_PASSWORD` — unique password for the local Compose database; use the same password in `DATABASE_URL`
+   - `REDIS_PASSWORD` — unique password for local Redis; keep the authenticated `REDIS_URL` in sync
+   - `DATABASE_URL` — PostgreSQL connection string (URL-encode special characters in the password)
    - `CIRCUITSOUL_AUTH_SECRET` — Minimum 32 characters, random
    - `GATEWAY_SECRET_KEY` — Random secret
    - `CREDENTIAL_ENCRYPTION_KEY` — Minimum 32 characters, random
@@ -56,13 +58,13 @@
    pnpm --filter @circuitsoul/db migrate:dev
    ```
 
-### Option B: Docker Compose (OSS engines only)
+### Option B: Docker Compose (local database, cache, and optional engines)
 
 ```bash
-docker-compose -f infra/docker-compose.yml up -d postgres redis
+docker compose -f infra/docker-compose.yml up -d postgres redis
 ```
 
-This starts PostgreSQL and Redis only. The OSS engines (n8n, Ghost, Wazuh, Prometheus) require real credentials and should only be started in a staging environment.
+PostgreSQL and Redis are published only on `127.0.0.1`; Compose requires explicit passwords and Redis authentication. The OSS engines (n8n, Ghost, Wazuh, Prometheus) are also loopback-bound and require real credentials. This Compose file is for local development, not a production ingress configuration.
 
 ## Application Startup
 
