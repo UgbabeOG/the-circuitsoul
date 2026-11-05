@@ -3,7 +3,7 @@ import { WazuhAdapter } from './wazuh';
 import { PrometheusAdapter } from './prometheus';
 import { GhostAdapter } from './ghost';
 
-const USE_MOCK_ENGINES = process.env.USE_MOCK_ENGINES !== 'false';
+const USE_MOCK_ENGINES = process.env.USE_MOCK_ENGINES === 'true';
 
 export const flowAdapter = new N8nAdapter(USE_MOCK_ENGINES);
 export const shieldAdapter = new WazuhAdapter(USE_MOCK_ENGINES);

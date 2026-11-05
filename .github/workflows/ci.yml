@@ -1,0 +1,232 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - stage1/security-foundation
+      - hardening/stage1-security-remediation
+      - hardening/release-readiness-single-agent
+  pull_request:
+    branches:
+      - master
+      - hardening/stage1-security-remediation
+      - hardening/release-readiness-single-agent
+
+env:
+  NODE_ENV: test
+  DATABASE_URL: "postgresql://circuitsoul:circuitsoul_test_password@localhost:5432/circuitsoul_test?schema=public"
+  REDIS_URL: "redis://localhost:6379"
+  USE_MOCK_ENGINES: "true"
+  AUTH_PROVIDER: "custom"
+  ALLOW_DEV_SESSION: "true"
+  CIRCUITSOUL_AUTH_SECRET: "test_secret_key_for_ci_only_do_not_use_in_production"
+  OPENAI_API_KEY: ""
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @circuitsoul/db generate
+
+      - name: Run TypeScript checks
+        run: pnpm typecheck
+
+      - name: Run lint
+        run: pnpm lint
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run secret scanning
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb
+        with:
+          path: .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: circuitsoul
+          POSTGRES_PASSWORD: circuitsoul_test_password
+          POSTGRES_DB: circuitsoul_test
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U circuitsoul -d circuitsoul_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @circuitsoul/db generate
+
+      - name: Run Prisma validation
+        run: pnpm --filter @circuitsoul/db exec prisma validate --schema=prisma/schema.prisma
+
+      - name: Apply clean and upgrade migrations
+        run: pnpm --filter @circuitsoul/db exec prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Run unit tests
+        run: pnpm test
+
+      - name: Run Prisma migration status check
+        run: pnpm --filter @circuitsoul/db exec prisma migrate status --schema=prisma/schema.prisma
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, test]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @circuitsoul/db generate
+
+      - name: Build all applications
+        run: pnpm build
+
+  migration-upgrade:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: circuitsoul
+          POSTGRES_PASSWORD: circuitsoul_test_password
+          POSTGRES_DB: circuitsoul_test
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U circuitsoul -d circuitsoul_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: "postgresql://circuitsoul:circuitsoul_test_password@localhost:5432/circuitsoul_test?schema=public"
+      CREDENTIAL_ENCRYPTION_KEY: "synthetic-ci-credential-encryption-key"
+      CREDENTIAL_BACKFILL_CONFIRM: "YES"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @circuitsoul/db generate
+
+      - name: Create existing-schema fixture
+        run: pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/migrations/init/migration.sql --schema=prisma/schema.prisma
+
+      - name: Mark legacy baseline as applied and seed plaintext credential
+        run: |
+          pnpm --filter @circuitsoul/db exec prisma migrate resolve --applied init --schema=prisma/schema.prisma
+          pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/upgrade-test-seed.sql --schema=prisma/schema.prisma
+
+      - name: Backfill encrypted cloud credentials
+        run: pnpm credentials:backfill
+
+      - name: Apply upgrade migrations
+        run: pnpm --filter @circuitsoul/db exec prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Verify plaintext retirement and encrypted data
+        run: pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/upgrade-test-verify.sql --schema=prisma/schema.prisma
+
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run dependency vulnerability scan
+        run: pnpm audit --audit-level moderate

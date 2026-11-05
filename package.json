@@ -4,15 +4,25 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint",
+    "lint": "eslint apps packages --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit --skipLibCheck --incremental false -p apps/admin/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p apps/web/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p apps/shield/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p apps/cloudops/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p apps/flow/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p apps/blog/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/auth/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/api-adapters/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/db/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/security/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/ai/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/events/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/feature-flags/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/observability/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/reporting/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/shared-types/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/storage/tsconfig.json && tsc --noEmit --skipLibCheck --incremental false -p packages/ui/tsconfig.json",
+    "test": "tsx --test packages/auth/src/index.test.ts apps/web/app/api/auth/auth-routes.test.ts apps/admin/lib/platform-admin-policy.test.ts packages/db/src/__tests__/tenant-isolation.test.ts packages/db/src/__tests__/cross-org-isolation.test.ts packages/db/src/__tests__/cross-org-api.test.ts packages/security/src/encryption.test.ts",
+    "test:auth": "tsx --test packages/auth/src/index.test.ts",
+    "credentials:backfill": "tsx packages/db/scripts/backfill-cloud-credentials.ts",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "autoprefixer": "^10.6.2",
+    "eslint": "8.57.1",
+    "eslint-config-next": "14.2.35",
+    "eslint-config-prettier": "9.1.0",
     "postcss": "^8.5.32",
     "prettier": "^3.2.5",
     "tailwindcss": "^3.4.19",
     "turbo": "^1.13.0",
+    "tsx": "4.19.2",
     "typescript": "^5.3.3"
-  }
+  },
+  "packageManager": "pnpm@9.15.0"
 }

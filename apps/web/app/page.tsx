@@ -6,7 +6,7 @@ export default function HomePage() {
   return (
     <div className="flex flex-col min-h-screen bg-navy-950">
       <Navbar activeApp="web" />
-      
+
       {/* Hero Section */}
       <header className="py-20 px-6 max-w-6xl mx-auto text-center flex flex-col items-center">
         <span className="px-3 py-1 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 rounded-full text-xs font-semibold tracking-wider mb-4 animate-pulse">
@@ -28,7 +28,7 @@ export default function HomePage() {
       {/* Grid of dash accessors */}
       <section className="px-6 max-w-6xl mx-auto py-12 w-full">
         <h2 className="text-2xl font-bold mb-8 text-center text-white">SaaS Infrastructure Suites</h2>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Shield */}
           <Card glowColor="blue" className="flex flex-col justify-between h-64">
@@ -126,7 +126,7 @@ export default function HomePage() {
       <section className="px-6 max-w-6xl mx-auto py-12 w-full border-t border-white/5">
         <h2 className="text-2xl font-bold mb-4 text-center text-white">Flexible Growth Pricing</h2>
         <p className="text-center text-slate-500 text-sm mb-12">Fair pricing adapted to local startup scaling tiers.</p>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card className="flex flex-col justify-between">
             <div>

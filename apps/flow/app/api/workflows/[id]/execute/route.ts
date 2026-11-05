@@ -1,74 +1,133 @@
 import { NextResponse } from 'next/server';
 import { flowAdapter } from '@circuitsoul/api-adapters';
-import { prisma } from '@circuitsoul/db';
-import { parseSession } from '@circuitsoul/auth';
+import { prisma, enforceEntitlement, recordUsage } from '@circuitsoul/db';
+import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
+import { z } from 'zod';
+
+const ExecuteSchema = z.object({
+  payload: z.record(z.unknown()).default({}),
+  triggerSource: z.string().min(1).max(64).default('CIRCUITSOUL_FLOW_UI')
+}).strict();
 
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = parseSession(Object.fromEntries(request.headers.entries()));
-    const workflowId = params.id;
-    const body = await request.json().catch(() => ({}));
-    const payload = body.payload || {};
-    const triggerSource = body.triggerSource || 'CIRCUITSOUL_FLOW_UI';
-
-    // 1. Trigger the workflow through the decoupled n8n adapter
-    const execution = await flowAdapter.triggerWorkflow(
-      workflowId,
-      payload,
-      triggerSource
+    const session = await requireAuthenticatedPermission(
+      Object.fromEntries(request.headers.entries()),
+      Permission.MANAGE_WORKFLOWS
     );
 
-    // 2. Track customer billing & usage
-    try {
-      if (session?.orgId) {
-        await prisma.usageEvent.create({
-          data: {
-            organizationId: session.orgId,
-            eventType: 'WORKFLOW_EXECUTION',
-            jobsExecuted: 1,
-            generationMs: execution.durationMs || 500,
-            rawPayload: {
-              workflowId,
-              executionId: execution.id,
-              triggerSource
-            }
-          }
-        });
-      }
-    } catch {
-      // Dev/mock mode fallback
+    // Enforce entitlement before workflow execution
+    await enforceEntitlement(session.orgId, 'WORKFLOW_EXECUTION');
+
+    const workflowId = params.id;
+    const parsedBody = ExecuteSchema.safeParse(await request.json());
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { success: false, error: parsedBody.error.issues[0]?.message || 'Invalid execution request' },
+        { status: 400 }
+      );
     }
 
-    // 3. Attempt to record execution in Prisma FlowExecution
+    const dbWorkflow = await prisma.flowWorkflow.findFirst({
+      where: { id: workflowId, organizationId: session.orgId }
+    });
+
+    if (!dbWorkflow) {
+      return NextResponse.json(
+        { success: false, error: 'Workflow not found or access denied' },
+        { status: 404 }
+      );
+    }
+    if (dbWorkflow.status !== 'ACTIVE') {
+      return NextResponse.json(
+        { success: false, error: 'Only active workflows can be executed' },
+        { status: 409 }
+      );
+    }
+
+    const externalWorkflowId = dbWorkflow.externalWorkflowId;
+    if (!externalWorkflowId) {
+      return NextResponse.json(
+        { success: false, error: 'Workflow has no external engine mapping; cannot execute' },
+        { status: 400 }
+      );
+    }
+
+    const executionRecord = await prisma.flowExecution.create({
+      data: { workflowId: dbWorkflow.id, status: 'RUNNING' }
+    });
+    const startedAt = Date.now();
+    let execution;
     try {
-      const dbWorkflow = await prisma.flowWorkflow.findFirst({
-        where: { id: workflowId }
+      execution = await flowAdapter.triggerWorkflow(
+        externalWorkflowId,
+        parsedBody.data.payload,
+        parsedBody.data.triggerSource
+      );
+    } catch (error) {
+      await prisma.flowExecution.update({
+        where: { id: executionRecord.id },
+        data: {
+          status: 'FAILED',
+          completedAt: new Date(),
+          logsJson: JSON.stringify({ error: error instanceof Error ? error.message : 'Engine request failed' })
+        }
       });
-
-      if (dbWorkflow) {
-        await prisma.flowExecution.create({
-          data: {
-            workflowId: dbWorkflow.id,
-            status: execution.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-            completedAt: new Date(),
-            logsJson: JSON.stringify(execution.output)
-          }
-        });
-      }
-    } catch {
-      // Dev/mock mode fallback
+      return NextResponse.json(
+        { success: false, error: 'Workflow engine execution failed', executionId: executionRecord.id },
+        { status: 502 }
+      );
     }
+
+    await prisma.flowExecution.update({
+      where: { id: executionRecord.id },
+      data: {
+        status: execution.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+        completedAt: new Date(),
+        logsJson: JSON.stringify(execution.output)
+      }
+    });
+    await recordUsage({
+      organizationId: session.orgId,
+      eventType: 'WORKFLOW_EXECUTION',
+      jobsExecuted: 1,
+      generationMs: Date.now() - startedAt,
+      rawPayload: {
+        workflowId: dbWorkflow.id,
+        externalWorkflowId,
+        executionId: execution.id,
+        triggerSource: parsedBody.data.triggerSource
+      }
+    });
 
     return NextResponse.json({
       success: true,
-      execution
+      execution,
+      executionId: executionRecord.id,
+      organizationId: session.orgId
     });
   } catch (error: any) {
+    if (error instanceof Error && error.message.startsWith('Unauthorized')) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+    if (error instanceof Error && error.message.startsWith('Forbidden')) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
+    }
+    if (error instanceof Error && error.message.startsWith('EntitlementDenied')) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 403 }
+      );
+    }
+
     return NextResponse.json(
-      { success: false, error: error.message || 'Execution failed' },
+      { success: false, error: error instanceof Error ? error.message : 'Execution failed' },
       { status: 500 }
     );
   }

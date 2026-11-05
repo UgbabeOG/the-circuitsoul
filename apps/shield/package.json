@@ -12,11 +12,16 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "lucide-react": "^0.344.0",
+    "zod": "^3.25.76",
     "@circuitsoul/ui": "workspace:*",
     "@circuitsoul/auth": "workspace:*",
     "@circuitsoul/security": "workspace:*",
     "@circuitsoul/api-adapters": "workspace:*",
-    "@circuitsoul/ai": "workspace:*"
+    "@circuitsoul/ai": "workspace:*",
+    "@circuitsoul/db": "workspace:*",
+    "@circuitsoul/shared-types": "workspace:*",
+    "@circuitsoul/reporting": "workspace:*",
+    "@circuitsoul/storage": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

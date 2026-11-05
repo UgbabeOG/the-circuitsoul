@@ -1,72 +1,100 @@
 import OpenAI from 'openai';
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const USE_MOCK_AI = process.env.USE_MOCK_AI === 'true' && !IS_PRODUCTION;
+
 export class AiService {
   private client: OpenAI | null = null;
+  private _hasKey: boolean = false;
 
   constructor() {
     const apiKey = process.env.OPENAI_API_KEY;
     if (apiKey) {
       this.client = new OpenAI({ apiKey });
+      this._hasKey = true;
+    } else if (IS_PRODUCTION) {
+      // Defer the error to method call time so module load during build doesn't fail
+      this._hasKey = false;
     }
+  }
+
+  private requireClient(): OpenAI {
+    if (IS_PRODUCTION && !this._hasKey) {
+      throw new Error(
+        'FATAL: OPENAI_API_KEY is required in production. AI services cannot operate without a provider key.'
+      );
+    }
+    if (!this.client && !USE_MOCK_AI) {
+      throw new Error(
+        'AI provider unavailable: OPENAI_API_KEY not configured and mock mode is disabled'
+      );
+    }
+    return this.client!;
   }
 
   async generateBlogDraft(topic: string, keywords: string[]): Promise<string> {
     const prompt = `Write a comprehensive, premium-quality blog draft about: ${topic}. Focus keywords: ${keywords.join(', ')}. Include sections, code examples if appropriate, and keep the tone professional yet accessible for SaaS developers.`;
-    
-    if (this.client) {
-      try {
-        const response = await this.client.chat.completions.create({
-          model: 'gpt-4-turbo',
-          messages: [{ role: 'user', content: prompt }]
-        });
-        return response.choices[0]?.message?.content || this.getMockBlogDraft(topic);
-      } catch {
-        return this.getMockBlogDraft(topic);
-      }
-    }
 
-    return this.getMockBlogDraft(topic);
+    const client = this.requireClient();
+    try {
+      const response = await client.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: [{ role: 'user', content: prompt }]
+      });
+      const content = response.choices[0]?.message?.content;
+      if (content) return content;
+      throw new Error('AI provider returned empty content');
+    } catch (error) {
+      if (IS_PRODUCTION) {
+        throw new Error(`AI blog generation failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+      return this.getMockBlogDraft(topic);
+    }
   }
 
   async recommendRemediation(vulnerabilityTitle: string, severity: string): Promise<string> {
     const prompt = `Recommend a specific, actionable remediation plan for a security vulnerability: ${vulnerabilityTitle} (Severity: ${severity}). Keep the instructions clear, listing command-line patches and config updates where applicable.`;
 
-    if (this.client) {
-      try {
-        const response = await this.client.chat.completions.create({
-          model: 'gpt-4-turbo',
-          messages: [{ role: 'user', content: prompt }]
-        });
-        return response.choices[0]?.message?.content || this.getMockRemediation(vulnerabilityTitle, severity);
-      } catch {
-        return this.getMockRemediation(vulnerabilityTitle, severity);
+    const client = this.requireClient();
+    try {
+      const response = await client.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: [{ role: 'user', content: prompt }]
+      });
+      const content = response.choices[0]?.message?.content;
+      if (content) return content;
+      throw new Error('AI provider returned empty content');
+    } catch (error) {
+      if (IS_PRODUCTION) {
+        throw new Error(`AI remediation generation failed: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
+      return this.getMockRemediation(vulnerabilityTitle, severity);
     }
-
-    return this.getMockRemediation(vulnerabilityTitle, severity);
   }
 
   async recommendCloudOptimization(provider: string, resourceDetails: string): Promise<string> {
     const prompt = `Recommend cost and performance optimization for the following ${provider} setup: ${resourceDetails}. Focus on multi-region configs, CDN caching, and database scaling.`;
 
-    if (this.client) {
-      try {
-        const response = await this.client.chat.completions.create({
-          model: 'gpt-4-turbo',
-          messages: [{ role: 'user', content: prompt }]
-        });
-        return response.choices[0]?.message?.content || this.getMockCloudOptimization(provider);
-      } catch {
-        return this.getMockCloudOptimization(provider);
+    const client = this.requireClient();
+    try {
+      const response = await client.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: [{ role: 'user', content: prompt }]
+      });
+      const content = response.choices[0]?.message?.content;
+      if (content) return content;
+      throw new Error('AI provider returned empty content');
+    } catch (error) {
+      if (IS_PRODUCTION) {
+        throw new Error(`AI cloud optimization failed: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
+      return this.getMockCloudOptimization(provider);
     }
-
-    return this.getMockCloudOptimization(provider);
   }
 
   private getMockBlogDraft(topic: string): string {
     return `
-# ${topic}
+# [MOCK AI] ${topic}
 
 ## Introduction
 As SaaS applications scale in emerging markets, building robust, resilient infrastructure is no longer optional. Startups must balance growth targets with data sovereignty compliance under local regulations.
@@ -77,7 +105,9 @@ As SaaS applications scale in emerging markets, building robust, resilient infra
 3. **Log Everything Securely**: Forward audit logs to encrypted centralized storage with strict data residency rules.
 
 ## Conclusion
-Building for African startups means optimizing for both local compliance (e.g. NDPR) and globally accepted cloud standards. 
+Building for African startups means optimizing for both local compliance (e.g. NDPR) and globally accepted cloud standards.
+
+> **Provenance:** This content was generated by CircuitSoul AI in mock development mode. It is not produced by a live AI provider and should not be used for production security or compliance decisions.
     `.trim();
   }
 
@@ -93,6 +123,8 @@ Building for African startups means optimizing for both local compliance (e.g. N
    - For Node environments: \`npm audit fix --force\` or upgrade package dependencies.
 3. **Audit Verification**:
    - Trigger a vulnerability assessment scan in CircuitSoul Shield dashboard.
+
+> **Provenance:** This content was generated by CircuitSoul AI in mock development mode. It is not produced by a live AI provider and should not be used for production security or compliance decisions.
     `.trim();
   }
 
@@ -107,6 +139,8 @@ Building for African startups means optimizing for both local compliance (e.g. N
    - Configure local CDNs close to West African hubs (e.g. AWS CloudFront Edge or local cache endpoints) to optimize response times.
 3. **High Availability**:
    - Transition to multi-zone PostgreSQL replication.
+
+> **Provenance:** This content was generated by CircuitSoul AI in mock development mode. It is not produced by a live AI provider and should not be used for production security or compliance decisions.
     `.trim();
   }
 }

@@ -30,9 +30,17 @@ export class PrometheusAdapter {
       this.queryMetric(cpuQuery),
       this.queryMetric(memQuery)
     ]);
+    const parseValue = (result: any): number | null => {
+      const value = Number(result?.data?.result?.[0]?.value?.[1]);
+      return Number.isFinite(value) ? value : null;
+    };
+    const cpu = parseValue(cpuResult);
+    const memory = parseValue(memResult);
     return {
-      cpu: parseFloat(cpuResult?.data?.result?.[0]?.value?.[1] || '0'),
-      memory: parseFloat(memResult?.data?.result?.[0]?.value?.[1] || '0')
+      state: cpu === null && memory === null ? 'unavailable' as const : 'live' as const,
+      cpu,
+      memory,
+      timestamp: new Date().toISOString()
     };
   }
 }

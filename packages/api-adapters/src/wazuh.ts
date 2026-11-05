@@ -36,6 +36,21 @@ export class WazuhAdapter {
     return response.data;
   }
 
+  async verifyAssetAgent(agentId: string, target: string): Promise<boolean> {
+    if (this.isMock) return false;
+    const token = await this.getAuthToken();
+    const response = await axios.get(`${this.baseUrl}/agents/${encodeURIComponent(agentId)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const agent = response.data?.data?.affected_items?.[0];
+    if (!agent || typeof agent.name !== 'string' || typeof agent.ip !== 'string') return false;
+
+    const normalizedTarget = target.trim().toLowerCase().replace(/\.$/, '');
+    return [agent.name, agent.ip].some(
+      (value: string) => value.trim().toLowerCase().replace(/\.$/, '') === normalizedTarget
+    );
+  }
+
   private async getAuthToken() {
     const response = await axios.post(`${this.baseUrl}/security/user/authenticate`, {}, {
       auth: {

@@ -1,0 +1,23 @@
+# CircuitSoul OSS Services Configuration Template
+# Copy to configs/docker-env for local Docker Compose execution
+# NEVER commit real secrets to this file. All values below are placeholders.
+
+# n8n configs
+N8N_ENCRYPTION_KEY=CHANGE_ME_N8N_ENCRYPTION_KEY
+N8N_API_KEY=CHANGE_ME_N8N_API_KEY
+N8N_BASIC_AUTH_ACTIVE=true
+N8N_BASIC_AUTH_USER=CHANGE_ME_N8N_ADMIN_USER
+N8N_BASIC_AUTH_PASSWORD=CHANGE_ME_N8N_ADMIN_PASSWORD
+
+# Ghost configs
+GHOST_URL=http://ghost:2368
+GHOST_DB_PASSWORD=CHANGE_ME_GHOST_DB_PASSWORD
+GHOST_ADMIN_API_KEY=CHANGE_ME_GHOST_ADMIN_API_KEY
+
+# Wazuh configs
+WAZUH_USER=CHANGE_ME_WAZUH_USER
+WAZUH_PASSWORD=CHANGE_ME_WAZUH_PASSWORD
+WAZUH_API_URL=https://wazuh:55000
+
+# Prometheus configs
+PROMETHEUS_API_URL=http://prometheus:9090

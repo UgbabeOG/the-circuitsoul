@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
-import { Queue, Worker, Job, QueueScheduler, ConnectionOptions, JobsOptions, WorkerOptions } from 'bullmq';
-import { Events, PayloadFor, isAIGenerationV1 } from './registry';
+import { Queue, Worker, Job, ConnectionOptions, JobsOptions, WorkerOptions } from 'bullmq';
+import { PayloadFor, isAIGenerationV1 } from './registry';
 
 export const AI_GENERATION_QUEUE_NAME = 'ai-generation';
 export const AI_GENERATION_DLQ_NAME = 'ai-generation-dlq';
@@ -30,14 +30,26 @@ export interface WorkerConfig {
 // ─── Redis Connection ─────────────────────────────────────────────────────────
 
 const defaultRedisConnection = (): ConnectionOptions => {
-  if (process.env.REDIS_URL) {
-    return { url: process.env.REDIS_URL };
-  }
+  const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
-  return {
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: Number(process.env.REDIS_PORT || 6379)
-  };
+  try {
+    const parsed = new URL(redisUrl);
+    const port = Number(parsed.port || 6379);
+    const db = parsed.pathname && parsed.pathname !== '/' ? Number(parsed.pathname.replace('/', '')) || 0 : 0;
+
+    return {
+      host: parsed.hostname || '127.0.0.1',
+      port,
+      username: parsed.username || undefined,
+      password: parsed.password || undefined,
+      db
+    } as ConnectionOptions;
+  } catch {
+    return {
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: Number(process.env.REDIS_PORT || 6379)
+    } as ConnectionOptions;
+  }
 };
 
 // ─── EventBus ─────────────────────────────────────────────────────────────────
@@ -49,7 +61,6 @@ export const eventBus = new EventBus();
 // ─── Queue Factories ──────────────────────────────────────────────────────────
 
 export function createQueue<T = unknown>(queueName: string, connection: ConnectionOptions = defaultRedisConnection()) {
-  new QueueScheduler(queueName, { connection });
   return new Queue<T>(queueName, { connection });
 }
 
