@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 const NdpRConfigSchema = z.object({
   dbHostingRegion: z.string().min(2),
+  isDataInAdequacyZone: z.boolean().default(true),
   encryptionAtRestEnabled: z.boolean().default(true),
   encryptionInTransitEnabled: z.boolean().default(true),
   consentLoggingActive: z.boolean().default(true),

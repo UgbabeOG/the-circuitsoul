@@ -12,6 +12,7 @@
  */
 
 import 'dotenv/config';
+import type { ConnectionOptions } from 'bullmq';
 import { createAIGenerationWorker, createDeadLetterQueue } from '@circuitsoul/events';
 import { prisma } from '@circuitsoul/db';
 import { initializeTelemetry } from '@circuitsoul/observability';
@@ -26,6 +27,28 @@ const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY || '5', 10);
 const aggregatorIntervalMs = parseInt(process.env.AGGREGATOR_INTERVAL_MS || '60000', 10);
 
+function getRedisConnection(): ConnectionOptions {
+  try {
+    const parsed = new URL(redisUrl);
+    const port = Number(parsed.port || 6379);
+    const pathname = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname.replace('/', '') : '';
+    const db = pathname ? Number(pathname) || 0 : 0;
+
+    return {
+      host: parsed.hostname || '127.0.0.1',
+      port,
+      username: parsed.username || undefined,
+      password: parsed.password || undefined,
+      db
+    } as ConnectionOptions;
+  } catch {
+    return {
+      host: '127.0.0.1',
+      port: 6379
+    } as ConnectionOptions;
+  }
+}
+
 // ─── Telemetry ────────────────────────────────────────────────────────────────
 
 const telemetry = initializeTelemetry({ serviceName: 'ai-worker' });
@@ -33,14 +56,16 @@ const telemetry = initializeTelemetry({ serviceName: 'ai-worker' });
 // ─── Worker Bootstrap ─────────────────────────────────────────────────────────
 
 function startWorker() {
-  const connection = { url: redisUrl };
+  const connection = getRedisConnection();
 
   // Create the AI generation worker with configurable concurrency
   const worker = createAIGenerationWorker(
     async (job) => {
+      const jobId = job.id ?? 'unknown';
+
       // Build immutable per-job context — no shared state between jobs
       const ctx: JobContext = {
-        jobId: job.id,
+        jobId,
         attemptsMade: job.attemptsMade + 1,
         queueName: 'ai-generation',
         timestamp: Date.now()
@@ -66,7 +91,8 @@ function startWorker() {
   });
 
   worker.on('failed', async (job, err) => {
-    console.error(`[ai-worker] Job failed: ${job?.id}`, err?.message ?? err);
+    const jobId = job?.id ?? 'unknown';
+    console.error(`[ai-worker] Job failed: ${jobId}`, err?.message ?? err);
 
     const attempts = job?.opts?.attempts ?? 0;
     const made = job?.attemptsMade ?? 0;
@@ -77,14 +103,14 @@ function startWorker() {
         'dlq',
         {
           originalJob: job.data,
-          jobId: job.id,
+          jobId,
           error: err?.message ?? String(err)
         },
         { removeOnComplete: true }
       );
 
       await createJobLog({
-        jobId: job.id,
+        jobId,
         queueName: 'ai-generation',
         jobName: 'ai-generation-request',
         attempt: made,
