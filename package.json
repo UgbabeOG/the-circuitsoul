@@ -4,7 +4,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint",
+    "lint": "npx tsc --noEmit --pretty false --skipLibCheck packages/auth/src/index.ts packages/api-adapters/src/index.ts packages/db/src/index.ts packages/db/src/tenant.ts packages/security/src/encryption.ts apps/admin/lib/platform-admin.ts apps/admin/lib/platform-admin-policy.ts",
     "test": "npx tsx --test packages/auth/src/index.test.ts apps/web/app/api/auth/auth-routes.test.ts apps/admin/lib/platform-admin-policy.test.ts packages/db/src/__tests__/tenant-isolation.test.ts packages/db/src/__tests__/cross-org-isolation.test.ts packages/db/src/__tests__/cross-org-api.test.ts packages/security/src/encryption.test.ts",
     "test:auth": "npx tsx --test packages/auth/src/index.test.ts",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""

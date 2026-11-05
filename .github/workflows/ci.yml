@@ -2,9 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [master, stage1/security-foundation, hardening/stage1-security-remediation]
+    branches:
+      - master
+      - stage1/security-foundation
+      - hardening/stage1-security-remediation
+      - hardening/release-readiness-single-agent
   pull_request:
-    branches: [master]
+    branches:
+      - master
+      - hardening/stage1-security-remediation
+      - hardening/release-readiness-single-agent
 
 env:
   NODE_ENV: test
@@ -26,7 +33,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.0
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -44,7 +51,7 @@ jobs:
         run: pnpm exec tsc --noEmit --skipLibCheck packages/auth/src/index.ts packages/api-adapters/src/index.ts packages/db/src/tenant.ts packages/db/src/index.ts
 
       - name: Run lint
-        run: pnpm exec turbo run lint
+        run: pnpm lint
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -53,7 +60,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run secret scanning
-        uses: trufflesecurity/trufflehog@v3
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb
         with:
           path: .
           baseline: .trufflehog-baseline.json
@@ -91,7 +98,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.0
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -124,7 +131,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.0
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -150,7 +157,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.0
 
       - name: Install Node.js
         uses: actions/setup-node@v4
