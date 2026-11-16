@@ -139,6 +139,13 @@ export function createTenantClient(organizationId: string) {
           ...args,
           where: { ...args.where, organizationId }
         }),
+      findUnique: async (args: any) => {
+        const item = await prisma.nDPRAssessment.findUnique(args);
+        if (item && item.organizationId !== organizationId) {
+          throw new Error('Cross-tenant NDPR assessment access denied');
+        }
+        return item;
+      },
       create: (args: any) =>
         prisma.nDPRAssessment.create({
           ...args,

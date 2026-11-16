@@ -43,14 +43,13 @@ export function evaluateNDPRCompliance(input: NDPRAssessmentInput): NDPRComplian
   const isRegionLocal =
     input.dbHostingRegion.toLowerCase().startsWith('ng') ||
     input.dbHostingRegion.toLowerCase().includes('nigeria') ||
-    input.dbHostingRegion.toLowerCase().includes('lagos') ||
-    input.dbHostingRegion.toLowerCase().includes('af-south-1');
+    input.dbHostingRegion.toLowerCase().includes('lagos');
 
   const p1Passed = isRegionLocal || input.isDataInAdequacyZone;
   const p1Score = p1Passed ? 25 : 0;
   if (!p1Passed) {
     requiredRemediations.push(
-      'Migrate primary customer databases to AWS af-south-1, ng-lagos-1, or a jurisdiction recognized by the NDPC as having an adequate level of protection (Section 41, NDPA 2023).'
+      'Migrate primary customer databases to a Nigerian-hosted region or a jurisdiction recognized by the NDPC as having an adequate level of protection (Section 41, NDPA 2023).'
     );
   }
   pillars.push({
