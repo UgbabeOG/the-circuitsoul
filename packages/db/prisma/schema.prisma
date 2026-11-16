@@ -57,6 +57,17 @@ enum BlogStatus {
   ARCHIVED
 }
 
+enum ArticleStatus {
+  SUGGESTED
+  GENERATING
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+}
+
 enum BillingInterval {
   MONTHLY
   ANNUAL
@@ -204,6 +215,9 @@ model Organization {
   activityLogs       ActivityLog[]
   subscriptions      Subscription[]
   blogPosts          BlogPost[]
+  articleJobs        ArticleGenerationJob[]
+  publishingAttempts PublishingAttempt[]
+  blogAutomation     BlogAutomationSettings[]
 }
 
 model Membership {
@@ -451,4 +465,120 @@ model RevokedSession {
 
   @@index([tokenHash])
   @@index([userId])
+}
+
+model TrendSource {
+  id           String           @id @default(uuid())
+  name         String
+  provider     String
+  url          String
+  isActive     Boolean          @default(true)
+  lastPolledAt DateTime?
+  lastError    String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  trends       CollectedTrend[]
+
+  @@unique([provider, url])
+}
+
+model CollectedTrend {
+  id                  String                @id @default(uuid())
+  sourceId            String
+  source              TrendSource           @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  topic               String
+  summary             String?
+  category            String
+  region              String                @default("Nigeria")
+  relevanceScore      Float                 @default(0)
+  freshnessScore      Float                 @default(0)
+  audienceValueScore  Float                 @default(0)
+  combinedScore       Float                 @default(0)
+  externalUrl         String?
+  externalId          String?
+  collectedAt         DateTime              @default(now())
+  createdAt           DateTime              @default(now())
+
+  articleJobs         ArticleGenerationJob[]
+
+  @@index([combinedScore])
+  @@index([collectedAt])
+  @@index([externalId])
+  @@unique([sourceId, externalId])
+}
+
+model ArticleGenerationJob {
+  id                   String        @id @default(uuid())
+  organizationId       String
+  organization         Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade, map: "ArticleGenerationJob_organizationId_fkey")
+  trendId              String?
+  trend                CollectedTrend? @relation(fields: [trendId], references: [id], onDelete: SetNull)
+  title                String
+  status               ArticleStatus @default(SUGGESTED)
+  prompt               String?
+  content              String?
+  summary              String?
+  slug                 String?
+  seoTitle             String?
+  seoDescription        String?
+  keywords             String[]      @default([])
+  heroImageUrl         String?
+  heroImageProvider    String?
+  sourceReferences     Json?
+  internalLinkSuggestions Json?
+  wordCount            Int?
+  readingTime          Int?
+  approvedAt           DateTime?
+  approvedBy           String?
+  scheduledAt          DateTime?
+  publishedAt          DateTime?
+  publishedBy          String?
+  retryCount           Int           @default(0)
+  lastError            String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  publishingAttempts PublishingAttempt[]
+
+  @@index([organizationId, status])
+  @@index([status, scheduledAt])
+  @@index([slug])
+}
+
+model PublishingAttempt {
+  id             String   @id @default(uuid())
+  articleId      String
+  article        ArticleGenerationJob @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, map: "PublishingAttempt_organizationId_fkey")
+  ghostPostId    String?
+  status         String
+  attemptNumber  Int      @default(1)
+  errorMessage   String?
+  requestPayload Json?
+  responsePayload Json?
+  createdAt      DateTime @default(now())
+
+  @@index([articleId, createdAt])
+  @@index([ghostPostId])
+}
+
+model BlogAutomationSettings {
+  id                   String   @id @default(uuid())
+  organizationId       String   @unique
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, map: "BlogAutomationSettings_organizationId_fkey")
+  autoDiscoverEnabled  Boolean  @default(true)
+  autoGenerateEnabled  Boolean  @default(false)
+  autoPublishEnabled   Boolean  @default(false)
+  approvalRequired     Boolean  @default(true)
+  dailyGenerationLimit Int      @default(3)
+  minRelevanceScore    Float   @default(60)
+  editorialTimezone    String   @default("Africa/Lagos")
+  generationScheduleHour Int    @default(9)
+  publishScheduleHour  Int      @default(10)
+  aiProvider           String?
+  imageProvider        String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }

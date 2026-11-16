@@ -1,6 +1,12 @@
 import { EventEmitter } from 'events';
 import { Queue, Worker, Job, ConnectionOptions, JobsOptions, WorkerOptions } from 'bullmq';
 import { PayloadFor, isAIGenerationV1 } from './registry';
+import { enqueueArticleGeneration, processArticleGenerationJob, type ArticleGenerationInput } from './article-generation';
+import { collectTrends, type CollectedTrendResult } from './trend-collection';
+import { TrendProvider } from '@circuitsoul/api-adapters';
+
+export { enqueueArticleGeneration, processArticleGenerationJob, collectTrends };
+export type { ArticleGenerationInput, CollectedTrendResult };
 
 export const AI_GENERATION_QUEUE_NAME = 'ai-generation';
 export const AI_GENERATION_DLQ_NAME = 'ai-generation-dlq';

@@ -1,7 +1,7 @@
 # CircuitSoul Implementation Status
 
-**Branch:** `hardening/stage1-security-remediation`
-**Date:** 2026-11-02
+**Branch:** `feat/circuitsoul-release-readiness`
+**Date:** 2026-11-16
 
 ## What Has Been Fixed (Stage 1 Security Foundation)
 
@@ -106,12 +106,26 @@
 
 | Item | Status | Blocker |
 |------|--------|---------|
-| Editorial approval workflow | Not started | Blog publishes directly |
-| Real Google Trends ingestion | Not started | Curated demo data only |
-| Real RSS ingestion | Not started | Not implemented |
+| Editorial approval workflow | Done | Blog API routes: approve, reject, schedule |
+| Real Google Trends ingestion | Provider ready | Configure `GOOGLE_TRENDS_RSS_URL` env var |
+| Real RSS ingestion | Provider ready | Configure `BLOG_RSS_FEEDS` env var |
 | Structured logging | Not started | Not implemented |
 | Backup/recovery strategy | Not started | Not documented |
 | Grafana dashboards | Not started | Not implemented |
+
+### Blog Automation (Completed)
+
+| Item | Status | Details |
+|------|--------|---------|
+| Trend source provider abstraction | Done | `packages/api-adapters/src/trends.ts` — GoogleTrendsProvider + RssTrendProvider + `createDefaultProviders()` |
+| Trend collection service | Done | `packages/events/src/trend-collection.ts` — scoring, dedup, relevance scoring for African SME audience |
+| Article generation pipeline | Done | `packages/events/src/article-generation.ts` — BullMQ-backed async generation with idempotency |
+| Editorial approval workflow | Done | API routes: `/api/articles`, `/api/articles/[id]/approve`, `/api/articles/[id]/reject`, `/api/articles/[id]/schedule` |
+| Scheduled publishing | Done | `POST /api/publish/schedule` — publishes due scheduled articles via Ghost adapter |
+| Trend API endpoints | Done | `POST /api/trends/collect` — trend collection initiation |
+| Generate API updated | Done | `POST /api/generate` — async BullMQ job enqueue + sync fallback |
+| BlogPost schema extended | Done | Prisma migration `20261106100000_blog_automation` + new models: TrendSource, CollectedTrend, ArticleGenerationJob, PublishingAttempt, BlogAutomationSettings, ArticleStatus enum |
+| 41 total tests passing | Done | 39 existing + 2 new Blog test suites |
 
 ## What Is Blocked
 
