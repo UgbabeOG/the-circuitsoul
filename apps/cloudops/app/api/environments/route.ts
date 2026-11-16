@@ -7,7 +7,8 @@ import { z } from 'zod';
 const ConnectEnvironmentSchema = z.object({
   provider: z.enum(['AWS', 'GCP', 'AZURE']),
   name: z.string().min(1),
-  credentials: z.string().min(1)
+  credentials: z.string().min(1),
+  prometheusInstanceLabel: z.string().min(1).optional()
 }).strict();
 
 export async function POST(request: Request) {
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { provider, name, credentials } = parsed.data;
+    const { provider, name, credentials, prometheusInstanceLabel } = parsed.data;
 
     // Encrypt credentials on write - never store plaintext
     const { credentialsEncrypted, credentialsIv } = encryptCloudCredentials(
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
         name,
         credentialsEncrypted,
         credentialsIv,
+        prometheusInstanceLabel: prometheusInstanceLabel ?? null,
         status: 'DISCONNECTED'
       },
       select: {
@@ -46,6 +48,7 @@ export async function POST(request: Request) {
         provider: true,
         name: true,
         status: true,
+        prometheusInstanceLabel: true,
         createdAt: true,
         updatedAt: true
       }
@@ -84,6 +87,7 @@ export async function GET(request: Request) {
         provider: true,
         name: true,
         status: true,
+        prometheusInstanceLabel: true,
         createdAt: true,
         updatedAt: true
       },
