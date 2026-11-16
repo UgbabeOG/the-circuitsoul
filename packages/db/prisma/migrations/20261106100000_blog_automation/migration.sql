@@ -77,7 +77,7 @@ CREATE TABLE "article_generation_jobs" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "article_generation_jobs_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "article_generation_jobs_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "article_generation_jobs_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "article_generation_jobs_trendId_fkey" FOREIGN KEY ("trendId") REFERENCES "collected_trends" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
@@ -101,7 +101,7 @@ CREATE TABLE "publishing_attempts" (
 
     CONSTRAINT "publishing_attempts_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "publishing_attempts_articleId_fkey" FOREIGN KEY ("articleId") REFERENCES "article_generation_jobs" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "publishing_attempts_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT "publishing_attempts_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 CREATE INDEX "publishing_attempts_articleId_createdAt_idx" ON "publishing_attempts" ("articleId", "createdAt" DESC);
@@ -128,5 +128,5 @@ CREATE TABLE "blog_automation_settings" (
 
     CONSTRAINT "blog_automation_settings_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "blog_automation_settings_organizationId_key" UNIQUE ("organizationId"),
-    CONSTRAINT "blog_automation_settings_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "organizations" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT "blog_automation_settings_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
