@@ -6,11 +6,11 @@ import { PrometheusAdapter } from './prometheus';
 test('PrometheusAdapter: live state when both CPU and memory are available', async () => {
   const adapter = new PrometheusAdapter(false);
   const originalGet = axios.get;
-  axios.get = async (url: string, params: any) => {
-    if (params.params.query.includes('node_cpu_seconds_total')) {
+  (axios as any).get = async (_url: string, _params: any) => {
+    if (_params.params.query.includes('node_cpu_seconds_total')) {
       return { data: { data: { result: [{ value: [Date.now() / 1000, '45'] }] } } };
     }
-    if (params.params.query.includes('node_memory_MemAvailable')) {
+    if (_params.params.query.includes('node_memory_MemAvailable')) {
       return { data: { data: { result: [{ value: [Date.now() / 1000, '30'] }] } } };
     }
     return { data: { data: { result: [] } } };
@@ -29,8 +29,8 @@ test('PrometheusAdapter: live state when both CPU and memory are available', asy
 test('PrometheusAdapter: partial state when only CPU is available', async () => {
   const adapter = new PrometheusAdapter(false);
   const originalGet = axios.get;
-  axios.get = async (url: string, params: any) => {
-    if (params.params.query.includes('node_cpu_seconds_total')) {
+  (axios as any).get = async (_url: string, _params: any) => {
+    if (_params.params.query.includes('node_cpu_seconds_total')) {
       return { data: { data: { result: [{ value: [Date.now() / 1000, '45'] }] } } };
     }
     return { data: { data: { result: [] } } };
@@ -49,7 +49,7 @@ test('PrometheusAdapter: partial state when only CPU is available', async () => 
 test('PrometheusAdapter: unavailable state when neither metric is available', async () => {
   const adapter = new PrometheusAdapter(false);
   const originalGet = axios.get;
-  axios.get = async () => ({
+  (axios as any).get = async () => ({
     data: { data: { result: [] } }
   });
 
