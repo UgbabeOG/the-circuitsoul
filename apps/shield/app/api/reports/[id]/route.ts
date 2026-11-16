@@ -5,12 +5,13 @@ import { buildNdprReport } from '@circuitsoul/reporting';
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { session } = await requireAuthenticatedOrg(Object.fromEntries(request.headers.entries()));
+    const id = (await params).id;
     const assessment = await prisma.nDPRAssessment.findFirst({
-      where: { id: params.id, organizationId: session.orgId }
+      where: { id, organizationId: session.orgId }
     });
     if (!assessment) {
       return NextResponse.json({ success: false, error: 'Assessment not found' }, { status: 404 });

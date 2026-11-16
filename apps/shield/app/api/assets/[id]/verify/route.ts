@@ -8,14 +8,15 @@ const VerifySchema = z.object({ agentId: z.string().min(1).max(128) }).strict();
 
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await requireAuthenticatedPermission(
       Object.fromEntries(request.headers.entries()),
       Permission.MANAGE_ASSETS
     );
-    if (!z.string().uuid().safeParse(params.id).success) {
+    const id = (await params).id;
+    if (!z.string().uuid().safeParse(id).success) {
       return NextResponse.json({ success: false, error: 'A valid asset UUID is required' }, { status: 400 });
     }
     const input = VerifySchema.safeParse(await request.json());
@@ -24,7 +25,7 @@ export async function POST(
     }
 
     const asset = await prisma.asset.findFirst({
-      where: { id: params.id, organizationId: session.orgId, isAuthorized: true }
+      where: { id, organizationId: session.orgId, isAuthorized: true }
     });
     if (!asset) {
       return NextResponse.json({ success: false, error: 'Authorized asset not found' }, { status: 404 });

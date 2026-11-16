@@ -18,3 +18,6 @@ export type { N8nWorkflowTemplate } from './mocks/n8n.mock';
 export { CURATED_AUTOMATION_TEMPLATES } from './mocks/n8n.mock';
 export type { GhostPost, AfricanTechTrend } from './mocks/ghost.mock';
 export { CURATED_AFRICAN_TECH_TRENDS } from './mocks/ghost.mock';
+export type { TrendProvider } from './trends';
+export { GoogleTrendsProvider, RssTrendProvider, createDefaultProviders } from './trends';
+export type { RawTrend } from './trends';
