@@ -4,14 +4,15 @@ on:
   push:
     branches:
       - master
-      - stage1/security-foundation
       - hardening/stage1-security-remediation
       - hardening/release-readiness-single-agent
+      - feat/circuitsoul-release-readiness
   pull_request:
     branches:
       - master
       - hardening/stage1-security-remediation
       - hardening/release-readiness-single-agent
+      - feat/circuitsoul-release-readiness
 
 env:
   NODE_ENV: test
@@ -192,11 +193,11 @@ jobs:
         run: pnpm --filter @circuitsoul/db generate
 
       - name: Create existing-schema fixture
-        run: pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/migrations/init/migration.sql --schema=prisma/schema.prisma
+        run: pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/migrations/20240101000000_init_baseline/migration.sql --schema=prisma/schema.prisma
 
       - name: Mark legacy baseline as applied and seed plaintext credential
         run: |
-          pnpm --filter @circuitsoul/db exec prisma migrate resolve --applied init --schema=prisma/schema.prisma
+          pnpm --filter @circuitsoul/db exec prisma migrate resolve --applied 20240101000000_init_baseline --schema=prisma/schema.prisma
           pnpm --filter @circuitsoul/db exec prisma db execute --file=prisma/upgrade-test-seed.sql --schema=prisma/schema.prisma
 
       - name: Backfill encrypted cloud credentials
