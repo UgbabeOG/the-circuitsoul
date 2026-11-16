@@ -8,14 +8,14 @@ const ToggleSchema = z.object({ status: z.enum(['ACTIVE', 'INACTIVE']) }).strict
 
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await requireAuthenticatedPermission(
       Object.fromEntries(request.headers.entries()),
       Permission.MANAGE_WORKFLOWS
     );
-    const workflowId = params.id;
+    const workflowId = (await params).id;
     const body = ToggleSchema.safeParse(await request.json());
     if (!body.success) {
       return NextResponse.json(

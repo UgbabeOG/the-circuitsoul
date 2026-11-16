@@ -11,7 +11,7 @@ const ExecuteSchema = z.object({
 
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await requireAuthenticatedPermission(
@@ -22,7 +22,7 @@ export async function POST(
     // Enforce entitlement before workflow execution
     await enforceEntitlement(session.orgId, 'WORKFLOW_EXECUTION');
 
-    const workflowId = params.id;
+    const workflowId = (await params).id;
     const parsedBody = ExecuteSchema.safeParse(await request.json());
     if (!parsedBody.success) {
       return NextResponse.json(

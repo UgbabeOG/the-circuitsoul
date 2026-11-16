@@ -38,9 +38,19 @@ interface AdminDashboardProps {
   }>;
 }
 
+function headersToObject(headers: { forEach: (callback: (value: string, key: string) => void) => void }) {
+  const result: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    result[key] = value;
+  });
+  return result;
+}
+
 export default async function AdminPage() {
+  let headersObj: Record<string, string> = {};
   try {
-    await requirePlatformAdmin(Object.fromEntries(headers().entries()));
+    headersObj = headersToObject(await headers());
+    await requirePlatformAdmin(headersObj);
   } catch {
     notFound();
   }
