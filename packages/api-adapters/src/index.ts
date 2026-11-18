@@ -21,3 +21,5 @@ export { CURATED_AFRICAN_TECH_TRENDS } from './mocks/ghost.mock';
 export type { TrendProvider } from './trends';
 export { GoogleTrendsProvider, RssTrendProvider, createDefaultProviders } from './trends';
 export type { RawTrend } from './trends';
+export type { ImageProvider, ImageGenerationInput, ImageResult } from './image-generation';
+export { NullImageProvider, PlaceholderImageProvider, createDefaultImageProvider } from './image-generation';

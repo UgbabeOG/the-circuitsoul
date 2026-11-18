@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { aiService } from '@circuitsoul/ai';
 import { prisma, enforceEntitlement, recordUsage } from '@circuitsoul/db';
 import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
+import { rateLimiters } from '@circuitsoul/security';
 
 export async function POST(request: Request) {
   try {
@@ -12,6 +13,16 @@ export async function POST(request: Request) {
 
     // Enforce entitlement before expensive AI operation
     await enforceEntitlement(session.orgId, 'AI_GENERATION');
+
+    // Rate limit AI generation attempts
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.aiGeneration.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many AI generation attempts. Try again later.' },
+        { status: 429 }
+      );
+    }
 
     const body = await request.json();
     const { topic, keywords } = body;

@@ -4,6 +4,7 @@ import { blogAdapter } from '@circuitsoul/api-adapters';
 import { enforceEntitlement, prisma, recordUsage } from '@circuitsoul/db';
 import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 import { sanitizeBlogHtml } from '../../../lib/sanitize-content';
+import { rateLimiters } from '@circuitsoul/security';
 
 const PublishSchema = z.object({
   title: z.string().trim().min(5).max(200),
@@ -37,6 +38,16 @@ export async function POST(request: Request) {
       Permission.PUBLISH_CONTENT
     );
     await enforceEntitlement(session.orgId, 'BLOG_PUBLICATION');
+
+    // Rate limit publishing attempts
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.publish.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many publishing attempts. Try again later.' },
+        { status: 429 }
+      );
+    }
 
     const parsed = PublishSchema.safeParse(await request.json());
     if (!parsed.success) {
