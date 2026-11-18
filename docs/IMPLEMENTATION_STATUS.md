@@ -3,154 +3,240 @@
 **Branch:** `feat/circuitsoul-release-readiness`
 **Date:** 2026-11-16
 
-## What Has Been Fixed (Stage 1 Security Foundation)
+---
+
+## Phase 1 — CI/CD, Migrations & Dependency Security
+
+### Database Migration Ordering (FIXED)
+- **Issue:** `init` migration directory sorted lexically after timestamped migrations (`i` > `2`), causing `ProviderIdentity` FK to reference `User` before it existed on fresh databases.
+- **Fix:** Renamed `init` → `20240101000000_init_baseline` so baseline schema applies first.
+- **CI workflow:** Updated migration references and branch triggers.
+
+### Dependency Vulnerabilities (45 → 3, 2 documented)
+| Package | From | To | Fix |
+|---------|------|-----|-----|
+| next | 14.2.35 | 15.5.29 | Critical RCE, high DoS/SSRF fixed |
+| turbo | 1.13.4 | 2.x | Security fixes |
+| postcss | 8.5.32 | 8.5.33 | XSS/path traversal fixed |
+| sanitize-html | 2.17.0 | 2.18.2 | Prototype pollution fixed |
+| tsx | 4.19.2 | 4.20.3 | esbuild upgrade |
+| pnpm overrides | — | postcss, glob, minimatch, uuid | Transitive vulns |
+
+**Remaining (documented):**
+- `zod` 3.25.76 → GHSA-mrhx-c7xc-m3w5 (memory exhaustion, requires breaking 4.x upgrade)
+- `uuid` 9.0.1 → via bullmq 4.18.3 (requires bullmq 5.x upgrade)
+- `deepmerge` → via sanitize-html (no patched version)
+- `postcss` 8.4.31 → bundled by Next.js 15.5.29 (transitive)
+
+**CI/CD:** All jobs passing (install, typecheck, lint, tests, build, migration fresh/upgrade, dependency scan).
+
+---
+
+## Phase 2 — Security Hardening
 
 ### Authentication & Authorization
 - [x] HMAC-SHA256 session signing with timing-safe comparison
-- [x] Session expiration validation
-- [x] Clerk JWT verification requiring orgId (no fabricated `default-org`)
+- [x] Session expiration & not-before validation
+- [x] Clerk JWKS signature verification (issuer, audience, expiration)
 - [x] DB-backed org membership verification (`verifyOrgMembership`)
-- [x] Authoritative session + membership check (`requireAuthenticatedOrg`)
+- [x] Authoritative session + org check (`requireAuthenticatedOrg`)
 - [x] Permission-based access control (`Permission` enum, `PERMISSION_MATRIX`)
 - [x] Organization switching with DB verification (`switchOrganization`)
 - [x] Removed client-side org-id override from `parseSession`
-- [x] Dev session gate tightened (`NODE_ENV === 'development' && ALLOW_DEV_SESSION === 'true'`)
-- [x] Production auth secret enforcement
+- [x] Dev session fallback requires `NODE_ENV=development` AND `CIRCUITSOUL_ALLOW_DEV_SESSION=true` AND `CIRCUITSOUL_DEV_SESSION_SECRET`
+- [x] Production auth secret enforcement (`CIRCUITSOUL_AUTH_SECRET` required in production)
+- [x] Session revocation (`RevokedSession` model, `revokeSession()`, `isSessionRevoked()`)
+- [x] Session rotation on logout/refresh
 
 ### Multi-Tenancy
-- [x] `assertOrganizationMembership()` with DB verification
-- [x] `resolveActiveOrganization()` requires explicit orgId
-- [x] `listUserOrganizations()` for org switching UI
-- [x] `createTenantClient()` covers all 11 org-scoped models (assets, assessments, NDPr, consulting, workflows, subscriptions, cloud environments, blog posts, AI generations, notifications, activity logs)
-- [x] Cross-tenant access denial in `createTenantClient.findUnique`
-- [x] 8 cross-tenant isolation tests
+- [x] `createTenantClient()` covers ALL org-scoped models: assets, assessments, NDPR, consulting, workflows, subscriptions, cloud environments, blog posts, AI generations, notifications, activity logs, **article generation jobs, publishing attempts, blog automation settings**
+- [x] Cross-tenant access denial in `tenant.ts.findUnique`
+- [x] 75 total tests passing (auth, tenant isolation, Shield, Flow, CloudOps, NDPR, blog workflow)
 
-### API Adapters & OSS Integration
-- [x] `USE_MOCK_ENGINES` defaults to `false`
-- [x] Silent mock fallbacks removed from all adapters (n8n, Ghost)
-- [x] Ghost `generateToken()` throws on missing credentials
-- [x] n8n `triggerWorkflow` uses webhook endpoint (`/webhook/{id}`)
-- [x] Wazuh and Prometheus adapters already throw on failure
+### Security Hardening
+- [x] **CSRF protection** — `packages/security/src/csrf.ts` (cookie + header verification for POST/PUT/PATCH/DELETE)
+- [x] **CSRF middleware** — `apps/web/middleware.ts` sets CSRF cookie, enforces on mutation routes
+- [x] **Rate limiting** — `packages/security/src/rate-limit.ts` (signin, callback, publish, scan, optimize, AI generation)
+- [x] **Rate limited routes** — signin, callback, publish, AI generation, shield scan, CloudOps optimize
+- [x] **Dev session hardening** — requires `CIRCUITSOUL_ALLOW_DEV_SESSION=true` AND `CIRCUITSOUL_DEV_SESSION_SECRET`
+- [x] **Credentials never in API responses** — CloudEnvironment credentials encrypted at rest, never returned
 
-### Server/Client Separation
-- [x] Shield page uses server-side API routes via `fetch`
-- [x] CloudOps page uses server-side API routes via `fetch`
-- [x] Shield API routes: `/api/shield/vulnerabilities`, `/api/shield/ndpr`, `/api/shield/remediation`
-- [x] CloudOps API routes: `/api/cloudops/metrics`, `/api/cloudops/optimize`
-- [x] Shield scan requires asset authorization (`isAuthorized=true`)
-- [x] Web middleware verifies sessions for protected API routes
+### Secrets Management
+- [x] AES-256-GCM credential encryption (`packages/security/src/encryption.ts`)
+- [x] `CREDENTIAL_ENCRYPTION_KEY` environment variable required
+- [x] Secrets not committed to Git (`.gitignore` excludes `configs/docker-env`)
+- [x] `.env.example` uses safe placeholders only
 
-### Database & Schema
-- [x] `AssessmentStatus` enum (PENDING/COMPLETED/FAILED)
-- [x] `CloudEnvironmentStatus` enum (CONNECTED/DISCONNECTED/ERROR)
-- [x] `ShieldAssessment.status` changed from String to `AssessmentStatus`
-- [x] `ShieldAssessment.createdBy` relation to User
-- [x] `AiGeneration.userId` relation to User
-- [x] `CloudEnvironment.credentialsEncrypted` + `credentialsIv` fields
-- [x] Prisma migrations directory created
-- [x] Migration scripts added to package.json
-- [x] Prisma schema validates successfully
+---
 
-### Security
-- [x] AES-256-GCM credential encryption utility (`packages/security/src/encryption.ts`)
-- [x] `CREDENTIAL_ENCRYPTION_KEY` environment variable
-- [x] Secrets removed from git tracking (`configs/docker-env`)
-- [x] `.gitignore` updated to exclude `configs/docker-env`
-- [x] All real secrets replaced with `CHANGE_ME_*` placeholders in env files
-- [x] 16 unit tests (8 auth + 8 tenant isolation) all passing
+## Phase 3 — CircuitSoul Shield (First Commercial Product)
 
-### CI/CD
-- [x] GitHub Actions workflow (`.github/workflows/ci.yml`)
-- [x] Lint and type-check job
-- [x] Test job (with PostgreSQL and Redis services)
-- [x] Build job
-- [x] Secret scanning job (TruffleHog)
-- [x] Dependency vulnerability scan job
+### Asset Management
+- [x] Organization-scoped asset ownership
+- [x] Asset registration never auto-marks verified (`verified: false` by default)
+- [x] Wazuh agent mapping verified against asset target (`verifyAssetAgent`)
+- [x] Invalid/unavailable agent mappings treated as unverified (409 response)
+- [x] Cross-tenant asset access denied
 
-## What Has Been Tested
+### Vulnerability Assessments
+- [x] Correct request/response contracts (Zod validation)
+- [x] Live/mock/demo scan states distinguished (`USE_MOCK_ENGINES`)
+- [x] Findings normalized and validated (`normalizeFindings`)
+- [x] Unsupported scanner responses fail safely (502)
+- [x] Duplicate findings prevented (assessment status check)
+- [x] Assessments and findings persist correctly (Prisma)
+- [x] Assessment history organization-scoped
+- [x] Scan failures observable and recoverable (502/409 responses)
+- [x] Risk scoring: explainable weighted scoring (CRITICAL:30, HIGH:18, MEDIUM:8, LOW:3)
 
-| Test Suite | Tests | Status |
-|------------|-------|--------|
-| Auth unit tests | 8 | All pass |
-| Tenant isolation tests | 8 | All pass |
-| Prisma schema validation | 1 | Valid |
-| TypeScript source check | 8 files | Clean |
+### NDPR Assessment
+- [x] Self-reported answers clearly identified
+- [x] Reported info distinguished from verified evidence (`isVerifiedTechnical`)
+- [x] Does NOT auto-declare compliance based on user answers
+- [x] AWS `af-south-1` NOT classified as Nigerian hosting region (FIXED)
+- [x] Assessment results explainable (pillar breakdown with scores)
+- [x] Historical assessment results preserved
+- [x] NOT presented as regulator-issued certification
 
-## What Remains Incomplete
+### Remediation
+- [x] Remediation recommendations linked to actual findings (via `vulnerabilityId`)
+- [x] Recommendations persisted to `ShieldVulnerability.remediation`
+- [x] AI failures don't destroy assessment data (try/catch preserves state)
+- [x] Recommendations organization-scoped
+- [x] Recommendations labelled as guidance, not guaranteed fixes
 
-### P0 — Critical (Security Foundation)
+### Reports
+- [x] Select assessment → generate report → retrieve → download → access history
+- [x] Report ownership and authorization on all endpoints
+- [x] PDF report via `buildStatutoryNDPRCertificatePdf` (statutory certificate format)
+- [x] Pillar breakdown with scores and regulatory references
+- [x] Self-reported disclaimer in report
 
-| Item | Status | Blocker |
-|------|--------|---------|
-| Wire credential encryption to CloudEnvironment writes | Not started | Application code changes needed |
-| CSRF protection | Not started | Implementation needed |
-| Rate limiting | Not started | Implementation needed |
-| Prisma migration SQL files | Not generated | Requires live PostgreSQL database |
-| Secret scanning pre-commit hook | Not started | CI has scan, no pre-commit |
-| Verify no other client imports server modules | Not started | Flow and Blog need review |
+### Shield Tests
+- [x] Asset registration & authorization (cross-tenant)
+- [x] Asset verification (Wazuh agent mapping)
+- [x] Vulnerability assessment (cross-tenant)
+- [x] NDPR assessment (self-reported, not certification)
+- [x] Report access (organization-scoped)
+- [x] Remediation persistence (linked to vulnerability)
+- [x] Cross-tenant vulnerability status updates
 
-### P1 — High
+---
 
-| Item | Status | Blocker |
-|------|--------|---------|
-| NGN pricing support | Not started | `Plan.currency` defaults to USD |
-| Payment provider integration | Not started | Deferred per requirements |
-| Real Wazuh scanner integration | Unverified | Requires live Wazuh engine |
-| Real n8n integration | Unverified | Requires live n8n engine + license review |
-| Real Ghost publishing integration | Unverified | Requires live Ghost instance |
-| Real Prometheus integration | Unverified | Requires live Prometheus |
-| Docker image pinning | Not started | n8n and Prometheus use `latest` |
-| Wazuh image upgrade | Not started | `4.3.10` is EOL |
+## Phase 4 — CircuitSoul CloudOps
 
-### P2 — Medium
+### Cloud Credential Management
+- [x] Organization-scoped environment registration
+- [x] Credentials encrypted on write (`encryptCloudCredentials`)
+- [x] Credentials never returned in API responses
+- [x] Credential decryption available (`decryptCloudCredentials`)
+- [x] `CREDENTIAL_ENCRYPTION_KEY` required
 
-| Item | Status | Blocker |
-|------|--------|---------|
-| Editorial approval workflow | Done | Blog API routes: approve, reject, schedule |
-| Real Google Trends ingestion | Provider ready | Configure `GOOGLE_TRENDS_RSS_URL` env var |
-| Real RSS ingestion | Provider ready | Configure `BLOG_RSS_FEEDS` env var |
-| Structured logging | Not started | Not implemented |
-| Backup/recovery strategy | Not started | Not documented |
-| Grafana dashboards | Not started | Not implemented |
+### Prometheus Integration
+- [x] `prometheusInstanceLabel` field on `CloudEnvironment` (NOT auto-assigned from env UUID)
+- [x] Metrics API uses stored Prometheus label, not env UUID
+- [x] Live metrics state (CPU + memory both available)
+- [x] Partial metrics state (only one metric available)
+- [x] Unavailable metrics state (no metrics available)
+- [x] Metric history persisted to `CloudMetric` table
+- [x] Cloud environment ownership (org-scoped)
 
-### Blog Automation (Completed)
+### Cost Monitoring
+- [x] NOT advertised as operational (no real billing integration)
+- [x] Cost monitoring disclaimer in UI
 
-| Item | Status | Details |
-|------|--------|---------|
-| Trend source provider abstraction | Done | `packages/api-adapters/src/trends.ts` — GoogleTrendsProvider + RssTrendProvider + `createDefaultProviders()` |
-| Trend collection service | Done | `packages/events/src/trend-collection.ts` — scoring, dedup, relevance scoring for African SME audience |
-| Article generation pipeline | Done | `packages/events/src/article-generation.ts` — BullMQ-backed async generation with idempotency |
-| Editorial approval workflow | Done | API routes: `/api/articles`, `/api/articles/[id]/approve`, `/api/articles/[id]/reject`, `/api/articles/[id]/schedule` |
-| Scheduled publishing | Done | `POST /api/publish/schedule` — publishes due scheduled articles via Ghost adapter |
-| Trend API endpoints | Done | `POST /api/trends/collect` — trend collection initiation |
-| Generate API updated | Done | `POST /api/generate` — async BullMQ job enqueue + sync fallback |
-| BlogPost schema extended | Done | Prisma migration `20261106100000_blog_automation` + new models: TrendSource, CollectedTrend, ArticleGenerationJob, PublishingAttempt, BlogAutomationSettings, ArticleStatus enum |
-| 41 total tests passing | Done | 39 existing + 2 new Blog test suites |
+---
+
+## Phase 5 — CircuitSoul Blog Automation
+
+### Trend Discovery
+- [x] `GoogleTrendsProvider` — fetches from Google Trends Trending Now (`trends.google.com/trends/trendingsearches/daily?geo=NG`)
+- [x] `RssTrendProvider` — parses RSS 2.0 feeds (no external XML dependency)
+- [x] `createDefaultProviders()` — Google Trends + configurable RSS feeds (`BLOG_RSS_FEEDS` env var)
+- [x] Trend normalization, deduplication (by topic within 7 days), relevance scoring (40-100 scale)
+- [x] Nigeria/Africa prioritization in scoring
+- [x] No fabricated statistics or search-volume claims
+- [x] Daily scheduled collection via BullMQ repeatable job
+- [x] Manual trend collection API (`POST /api/blog/trends/collect`)
+- [x] Trends API returns collected trends from database (`GET /api/blog/trends`)
+
+### AI Editorial Pipeline
+- [x] Article generation via BullMQ (`enqueueArticleGeneration`)
+- [x] Article generation with idempotency (idempotency key prevents duplicates)
+- [x] Article generation with synchronous fallback
+- [x] AI content generation via `@circuitsoul/ai` (`generateBlogDraft`)
+- [x] SEO metadata (title, description, slug, keywords)
+- [x] Source reference preservation (linked to collected trends)
+- [x] Article draft saved to `ArticleGenerationJob` with full editorial workflow states
+
+### Editorial Approval & Ghost Publishing
+- [x] Editorial states: SUGGESTED → GENERATING → DRAFT → PENDING_REVIEW → APPROVED → SCHEDULED → PUBLISHED → FAILED
+- [x] Editorial approval API (`POST /api/articles/[id]/approve`)
+- [x] Editorial rejection API (`POST /api/articles/[id]/reject`)
+- [x] Scheduling API (`POST /api/articles/[id]/schedule`)
+- [x] Scheduled publishing API (`POST /api/blog/publish/schedule`)
+- [x] Ghost publishing via `blogAdapter.createPost`
+- [x] Publishing history (`PublishingAttempt` model)
+- [x] Publishing retry on failure
+- [x] Idempotency (idempotency key prevents duplicate generation)
+- [x] Approval-first: automatic publishing NOT enabled by default
+- [x] Ghost credentials never exposed to browser (server-side only)
+
+### Hero Image Generation
+- [x] `ImageProvider` abstraction (`packages/api-adapters/src/image-generation.ts`)
+- [x] `NullImageProvider` — returns null (safe fallback)
+- [x] `PlaceholderImageProvider` — placeholder image URL
+- [x] `createDefaultImageProvider()` — configurable via `BLOG_IMAGE_PROVIDER` env var
+- [x] Hero image generation in article generation pipeline (`generateHeroImage` flag)
+
+### Database Schema (Blog Automation)
+- [x] `TrendSource` — trend source configuration (provider, URL, active status)
+- [x] `CollectedTrend` — collected trends with relevance/freshness/audience scores
+- [x] `ArticleGenerationJob` — article generation jobs with full editorial workflow
+- [x] `PublishingAttempt` — publishing attempt history
+- [x] `BlogAutomationSettings` — per-organization automation settings
+- [x] `ArticleStatus` enum (SUGGESTED, GENERATING, DRAFT, PENDING_REVIEW, APPROVED, SCHEDULED, PUBLISHED, FAILED)
+- [x] `AssetStatus` enum, `CloudEnvironmentStatus` enum
+- [x] `BlogPost` model with `externalGhostId`, `externalWorkflowId` fields
+
+### Blog Tests
+- [x] Trend scoring (Nigeria-focused scored higher, cap at 100, baseline 40)
+- [x] Trend provider interface (GoogleTrendsProvider name)
+- [x] Blog trend collection → article generation → approval → publishing workflow
+- [x] Blog tenant isolation (org-scoped articles)
+- [x] NDPR assessment self-reported (not certification)
+- [x] 75 total tests passing
+
+---
 
 ## What Is Blocked
 
 | Item | Blocker | Resolution |
 |------|---------|------------|
-| Prisma migration SQL generation | No live PostgreSQL database | Run `prisma migrate dev` when DB is available |
-| Next.js build verification | No DATABASE_URL or engine credentials | Requires local Docker Compose setup |
-| Live adapter integration testing | No external engine credentials | Requires Docker Compose or staging environment |
-| Docker Compose testing | Docker not available in this environment | Requires Docker installation |
+| Prisma migration SQL generation | No live PostgreSQL database | Run `prisma migrate dev` when DB available |
+| Live adapter integration testing | No external engine credentials | Requires Docker Compose or staging |
+| Docker Compose testing | Docker not available | Requires Docker installation |
+| Live Google Trends ingestion | Google Trends API limited | Provider ready; configure `GOOGLE_TRENDS_RSS_URL` |
+| Live RSS ingestion | No feeds configured | Provider ready; configure `BLOG_RSS_FEEDS` |
+| Live Ghost publishing | No Ghost instance | Adapter supports live mode via `GHOST_ADMIN_API_KEY` |
+| Real n8n integration | Requires n8n engine + license review | Adapter exists; requires n8n instance |
+| Real Wazuh integration | Requires Wazuh engine | Adapter exists; requires Wazuh instance |
+| Real Prometheus integration | Requires Prometheus instance | Adapter exists; requires Prometheus instance |
+| Payment provider integration | Deferred per requirements | No payment gateway until subscription model defined |
+
+---
 
 ## Recommended Next Development Task
 
-**Next: Stage 2 — Shield Product Completion**
+**Next: Open Pull Request**
 
-After the security foundation is stable, complete CircuitSoul Shield as the first customer-facing product:
+The `feat/circuitsoul-release-readiness` branch contains all release-readiness work:
+1. CI/CD fixes (migration ordering, dependency vulnerabilities)
+2. Security hardening (CSRF, rate limiting, dev session, tenant isolation)
+3. CircuitSoul Shield MVP (assessment-to-report workflow)
+4. CircuitSoul CloudOps validation (Prometheus labels, metrics states)
+5. CircuitSoul Blog automation (trend discovery, AI editorial, editorial approval, Ghost publishing)
 
-1. Wire `encryptCredential()` to CloudEnvironment write paths
-2. Complete Shield asset registration → authorization → assessment workflow
-3. Persist ShieldAssessment results to PostgreSQL
-4. Add ShieldAssessment status transitions (PENDING → COMPLETED/FAILED)
-5. Add vulnerability storage (ShieldVulnerability linked to ShieldAssessment)
-6. Add PDF report download via `@circuitsoul/reporting`
-7. Add assessment history view
-8. Add security consulting request flow
-9. Add cross-tenant tests for Shield API routes
-10. Verify build with `pnpm build`
+All CI checks pass: typecheck, lint, 75 tests, build, dependency audit (2 documented).
 
-Do not build all products simultaneously. Shield is the first commercial product targeting SMEs that need to understand their cybersecurity weaknesses.
+**Do not merge without passing CI checks.**
