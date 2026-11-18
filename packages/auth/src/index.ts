@@ -112,14 +112,16 @@ export enum Permission {
   VIEW_ORG = 'VIEW_ORG',
   MANAGE_WORKFLOWS = 'MANAGE_WORKFLOWS',
   PUBLISH_CONTENT = 'PUBLISH_CONTENT',
-  MANAGE_ASSETS = 'MANAGE_ASSETS'
+  MANAGE_ASSETS = 'MANAGE_ASSETS',
+  MANAGE_BLOG = 'MANAGE_BLOG'
 }
 
 const PERMISSION_MATRIX: Record<Permission, Role[]> = {
   [Permission.VIEW_ORG]: [Role.OWNER, Role.ADMIN, Role.MEMBER],
   [Permission.MANAGE_WORKFLOWS]: [Role.OWNER, Role.ADMIN],
   [Permission.PUBLISH_CONTENT]: [Role.OWNER, Role.ADMIN],
-  [Permission.MANAGE_ASSETS]: [Role.OWNER, Role.ADMIN]
+  [Permission.MANAGE_ASSETS]: [Role.OWNER, Role.ADMIN],
+  [Permission.MANAGE_BLOG]: [Role.OWNER, Role.ADMIN]
 };
 
 const DEFAULT_DEV_SECRET = 'circuitsoul_development_auth_secret_minimum_32_characters_key_2026';

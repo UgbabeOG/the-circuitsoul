@@ -4,6 +4,7 @@ import { PayloadFor, isAIGenerationV1 } from './registry';
 import { enqueueArticleGeneration, processArticleGenerationJob, type ArticleGenerationInput } from './article-generation';
 import { collectTrends, type CollectedTrendResult } from './trend-collection';
 import { TrendProvider } from '@circuitsoul/api-adapters';
+import { publishScheduledArticles, type ScheduledPublishingJobData } from './scheduled-publishing';
 
 export { enqueueArticleGeneration, processArticleGenerationJob, collectTrends };
 export type { ArticleGenerationInput, CollectedTrendResult };
@@ -43,7 +44,7 @@ export interface WorkerConfig {
 
 // ─── Redis Connection ─────────────────────────────────────────────────────────
 
-const defaultRedisConnection = (): ConnectionOptions => {
+export const defaultRedisConnection = (): ConnectionOptions => {
   const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
   try {
@@ -173,3 +174,6 @@ export function createTrendCollectionWorker(
     workerOptions as WorkerOptions
   );
 }
+
+export { publishScheduledArticles };
+export type { ScheduledPublishingJobData };
