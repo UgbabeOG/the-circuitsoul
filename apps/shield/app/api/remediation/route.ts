@@ -46,6 +46,12 @@ export async function POST(request: Request) {
     const startedAt = Date.now();
     const advice = await aiService.recommendRemediation(vulnerability.title, vulnerability.severity);
 
+    // Persist AI remediation recommendation linked to the finding
+    await prisma.shieldVulnerability.update({
+      where: { id: vulnerability.id },
+      data: { remediation: advice }
+    });
+
     await recordUsage({
       organizationId: session.orgId,
       eventType: 'SHIELD_REMEDIATION',
