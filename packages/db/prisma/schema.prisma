@@ -374,8 +374,10 @@ model FlowExecution {
   startedAt  DateTime        @default(now())
   completedAt DateTime?
   logsJson   String?         // Run traces & errors
+  retryCount Int             @default(0) // Number of retry attempts for failed executions
 
   @@index([workflowId, startedAt])
+  @@index([status])
 }
 
 model BlogPost {

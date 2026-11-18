@@ -3,6 +3,7 @@ import { Permission, requireAuthenticatedOrg, requireAuthenticatedPermission } f
 import { shieldAdapter } from '@circuitsoul/api-adapters';
 import { prisma } from '@circuitsoul/db';
 import { z } from 'zod';
+import { rateLimiters } from '@circuitsoul/security';
 
 const AssetIdSchema = z.string().uuid();
 const ScanRequestSchema = z.object({ assetId: AssetIdSchema }).strict();
@@ -152,6 +153,15 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: parsed.error.issues[0]?.message || 'Invalid scan request' },
         { status: 400 }
+      );
+    }
+    // Rate limit scan requests
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.scan.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many scan requests. Try again later.' },
+        { status: 429 }
       );
     }
     const asset = await findAuthorizedAsset(session.orgId, parsed.data.assetId);

@@ -4,6 +4,7 @@ import { aiService } from '@circuitsoul/ai';
 import { enforceEntitlement, prisma, recordUsage } from '@circuitsoul/db';
 import { opsAdapter } from '@circuitsoul/api-adapters';
 import { z } from 'zod';
+import { rateLimiters } from '@circuitsoul/security';
 
 const OptimizationSchema = z.object({
   environmentId: z.string().uuid()
@@ -18,6 +19,16 @@ export async function POST(request: Request) {
     // Enforce entitlement before cloud optimization
     await enforceEntitlement(session.orgId, 'CLOUD_OPTIMIZATION');
 
+    // Rate limit optimization requests
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.optimize.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many optimization requests. Try again later.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
 
     const parsed = OptimizationSchema.safeParse(body);
@@ -30,13 +41,21 @@ export async function POST(request: Request) {
 
     const environment = await prisma.cloudEnvironment.findFirst({
       where: { id: parsed.data.environmentId, organizationId: session.orgId },
-      select: { id: true, provider: true }
+      select: { id: true, provider: true, prometheusInstanceLabel: true }
     });
     if (!environment) {
       return NextResponse.json({ success: false, error: 'Cloud environment not found' }, { status: 404 });
     }
 
-    const metrics = await opsAdapter.getResourceMetrics(environment.id);
+    // Use only the stored Prometheus instance label; never fall back to env UUID
+    if (!environment.prometheusInstanceLabel) {
+      return NextResponse.json(
+        { success: false, state: 'unavailable', error: 'Prometheus instance label not configured for this environment' },
+        { status: 409 }
+      );
+    }
+
+    const metrics = await opsAdapter.getResourceMetrics(environment.prometheusInstanceLabel);
     if (metrics.state !== 'live' || metrics.cpu === null || metrics.memory === null) {
       return NextResponse.json(
         { success: false, state: metrics.state, error: 'Optimization requires complete live Prometheus metrics' },

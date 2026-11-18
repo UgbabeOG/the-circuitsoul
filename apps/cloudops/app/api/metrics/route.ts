@@ -39,11 +39,23 @@ export async function GET(request: Request) {
 
     let data: Awaited<ReturnType<typeof opsAdapter.getResourceMetrics>>;
     try {
-      // Use the stored Prometheus instance label, falling back to the env UUID
-      // only when no label has been configured (backward compatibility).
-      data = await opsAdapter.getResourceMetrics(
-        environment.prometheusInstanceLabel ?? hostId
-      );
+      // Use only the stored Prometheus instance label. Never fall back to the
+      // environment UUID -- an application UUID is not a Prometheus label.
+      if (!environment.prometheusInstanceLabel) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            state: 'unavailable',
+            cpu: null,
+            memory: null,
+            timestamp: null,
+            reason: 'Prometheus instance label not configured for this environment'
+          },
+          organizationId: session.orgId,
+          environmentId: environment.id
+        });
+      }
+      data = await opsAdapter.getResourceMetrics(environment.prometheusInstanceLabel);
     } catch {
       return NextResponse.json({
         success: true,
