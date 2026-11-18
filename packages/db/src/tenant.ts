@@ -183,6 +183,30 @@ export function createTenantClient(organizationId: string) {
           data: { ...args.data, organizationId }
         })
     },
+    flowExecutions: {
+      findMany: (args: any = {}) =>
+        prisma.flowExecution.findMany({
+          ...args,
+          where: { ...args.where, workflowId: args.where?.workflowId }
+        }),
+      findUnique: async (args: any) => {
+        const item = await prisma.flowExecution.findUnique(args);
+        if (item) {
+          const workflow = await prisma.flowWorkflow.findUnique({
+            where: { id: item.workflowId }
+          });
+          if (!workflow || workflow.organizationId !== organizationId) {
+            throw new Error('Cross-tenant flow execution access denied');
+          }
+        }
+        return item;
+      },
+      create: (args: any) =>
+        prisma.flowExecution.create({
+          ...args,
+          data: { ...args.data }
+        })
+    },
     subscriptions: {
       findMany: (args: any = {}) =>
         prisma.subscription.findMany({
