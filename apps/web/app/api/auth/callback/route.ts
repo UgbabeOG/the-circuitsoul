@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { signSessionToken, verifyProviderToken } from '@circuitsoul/auth';
 import { prisma } from '@circuitsoul/db';
+import { rateLimiters } from '@circuitsoul/security';
 
 function cookieValue(request: Request, name: string): string | null {
   const cookies = request.headers.get('cookie') || '';
@@ -24,6 +25,15 @@ function matchesState(expected: string | null, actual: unknown): boolean {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { state?: unknown; token?: unknown };
+    // Rate limit auth callback attempts
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.callback.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many callback attempts. Try again later.' },
+        { status: 429 }
+      );
+    }
     if (!matchesState(cookieValue(request, 'circuitsoul_auth_state'), body.state)) {
       return NextResponse.json(
         { success: false, error: 'Invalid or expired sign-in state' },

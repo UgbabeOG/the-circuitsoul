@@ -226,7 +226,15 @@ export function parseSession(headers: Record<string, string | undefined>): UserS
 
   // 3. Check signed custom session header
   // 4. Explicit dev override only when intentionally enabled in development.
-  if (process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_SESSION === 'true') {
+  // Requires BOTH NODE_ENV=development AND CIRCUITSOUL_ALLOW_DEV_SESSION=true.
+  // Never available in production even if NODE_ENV is misconfigured.
+  if (
+    process.env.NODE_ENV === 'development' &&
+    process.env.CIRCUITSOUL_ALLOW_DEV_SESSION === 'true'
+  ) {
+    if (!process.env.CIRCUITSOUL_DEV_SESSION_SECRET) {
+      throw new Error('FATAL SECURITY: CIRCUITSOUL_DEV_SESSION_SECRET is required for dev sessions');
+    }
     return {
       userId: 'user-dev-uuid-001',
       email: 'dev@circuitsoul.com',

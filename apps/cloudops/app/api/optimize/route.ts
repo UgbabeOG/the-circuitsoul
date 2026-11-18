@@ -4,6 +4,7 @@ import { aiService } from '@circuitsoul/ai';
 import { enforceEntitlement, prisma, recordUsage } from '@circuitsoul/db';
 import { opsAdapter } from '@circuitsoul/api-adapters';
 import { z } from 'zod';
+import { rateLimiters } from '@circuitsoul/security';
 
 const OptimizationSchema = z.object({
   environmentId: z.string().uuid()
@@ -17,6 +18,16 @@ export async function POST(request: Request) {
 
     // Enforce entitlement before cloud optimization
     await enforceEntitlement(session.orgId, 'CLOUD_OPTIMIZATION');
+
+    // Rate limit optimization requests
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.optimize.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many optimization requests. Try again later.' },
+        { status: 429 }
+      );
+    }
 
     const body = await request.json();
 

@@ -283,6 +283,69 @@ export function createTenantClient(organizationId: string) {
           data: { ...args.data, organizationId }
         })
     },
+    articleGenerationJobs: {
+      findMany: (args: any = {}) =>
+        prisma.articleGenerationJob.findMany({
+          ...args,
+          where: { ...args.where, organizationId }
+        }),
+      findUnique: async (args: any) => {
+        const item = await prisma.articleGenerationJob.findUnique(args);
+        if (item && item.organizationId !== organizationId) {
+          throw new Error('Cross-tenant article generation job access denied');
+        }
+        return item;
+      },
+      create: (args: any) =>
+        prisma.articleGenerationJob.create({
+          ...args,
+          data: { ...args.data, organizationId }
+        })
+    },
+    publishingAttempts: {
+      findMany: (args: any = {}) =>
+        prisma.publishingAttempt.findMany({
+          ...args,
+          where: { ...args.where, organizationId }
+        }),
+      findUnique: async (args: any) => {
+        const item = await prisma.publishingAttempt.findUnique(args);
+        if (item && item.organizationId !== organizationId) {
+          throw new Error('Cross-tenant publishing attempt access denied');
+        }
+        return item;
+      },
+      create: (args: any) =>
+        prisma.publishingAttempt.create({
+          ...args,
+          data: { ...args.data, organizationId }
+        })
+    },
+    blogAutomationSettings: {
+      findMany: (args: any = {}) =>
+        prisma.blogAutomationSettings.findMany({
+          ...args,
+          where: { ...args.where, organizationId }
+        }),
+      findUnique: async (args: any) => {
+        const item = await prisma.blogAutomationSettings.findUnique(args);
+        if (item && item.organizationId !== organizationId) {
+          throw new Error('Cross-tenant blog automation settings access denied');
+        }
+        return item;
+      },
+      create: (args: any) =>
+        prisma.blogAutomationSettings.create({
+          ...args,
+          data: { ...args.data, organizationId }
+        }),
+      update: (args: any) =>
+        prisma.blogAutomationSettings.update({
+          ...args,
+          where: { ...args.where, organizationId },
+          data: args.data
+        })
+    },
     notifications: {
       findMany: (args: any = {}) =>
         prisma.notification.findMany({

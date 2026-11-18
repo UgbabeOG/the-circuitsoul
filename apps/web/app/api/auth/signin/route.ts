@@ -1,8 +1,19 @@
 import { NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
+import { rateLimiters } from '@circuitsoul/security';
 
 export async function POST(request: Request) {
   try {
+    // Rate limit sign-in attempts
+    const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown';
+    const rl = rateLimiters.signin.check(ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many sign-in attempts. Try again later.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const provider = typeof body.provider === 'string' ? body.provider.toLowerCase() : 'custom';
 
