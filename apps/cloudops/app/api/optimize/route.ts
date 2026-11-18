@@ -41,13 +41,21 @@ export async function POST(request: Request) {
 
     const environment = await prisma.cloudEnvironment.findFirst({
       where: { id: parsed.data.environmentId, organizationId: session.orgId },
-      select: { id: true, provider: true }
+      select: { id: true, provider: true, prometheusInstanceLabel: true }
     });
     if (!environment) {
       return NextResponse.json({ success: false, error: 'Cloud environment not found' }, { status: 404 });
     }
 
-    const metrics = await opsAdapter.getResourceMetrics(environment.id);
+    // Use only the stored Prometheus instance label; never fall back to env UUID
+    if (!environment.prometheusInstanceLabel) {
+      return NextResponse.json(
+        { success: false, state: 'unavailable', error: 'Prometheus instance label not configured for this environment' },
+        { status: 409 }
+      );
+    }
+
+    const metrics = await opsAdapter.getResourceMetrics(environment.prometheusInstanceLabel);
     if (metrics.state !== 'live' || metrics.cpu === null || metrics.memory === null) {
       return NextResponse.json(
         { success: false, state: metrics.state, error: 'Optimization requires complete live Prometheus metrics' },
