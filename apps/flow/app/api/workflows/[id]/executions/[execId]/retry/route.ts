@@ -5,11 +5,22 @@ import { Permission, requireAuthenticatedPermission } from '@circuitsoul/auth';
 import { z } from 'zod';
 
 const MAX_RETRIES = 3;
+const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const RetrySchema = z.object({
   payload: z.record(z.unknown()).default({}),
   triggerSource: z.string().min(1).max(64).default('CIRCUITSOUL_FLOW_RETRY')
 }).strict();
+
+class HttpError extends Error {
+  status: number;
+  body: any;
+  constructor(status: number, message: string, body?: any) {
+    super(message);
+    this.status = status;
+    this.body = body ?? { success: false, error: message };
+  }
+}
 
 export async function POST(
   request: Request,
@@ -33,158 +44,207 @@ export async function POST(
       );
     }
 
-    // Verify the workflow belongs to the org
-    const dbWorkflow = await prisma.flowWorkflow.findFirst({
-      where: { id: workflowId, organizationId: session.orgId }
-    });
+    const idempotencyKey = request.headers.get('idempotency-key') || undefined;
 
-    if (!dbWorkflow) {
-      return NextResponse.json(
-        { success: false, error: 'Workflow not found or access denied' },
-        { status: 404 }
-      );
-    }
+    return await prisma.$transaction(async (tx) => {
+      // Idempotency: if a retry with this key was already processed (within window), return it
+      if (idempotencyKey) {
+        const existing = await tx.flowExecution.findFirst({
+          where: {
+            workflowId,
+            logsJson: { contains: `"idempotencyKey":"${idempotencyKey}"` },
+            startedAt: { gte: new Date(Date.now() - IDEMPOTENCY_WINDOW_MS) }
+          },
+          orderBy: { startedAt: 'desc' }
+        });
+        if (existing) {
+          throw new HttpError(200, 'Idempotent retry response', {
+            success: existing.status === 'SUCCESS',
+            execution: existing,
+            executionId: existing.id,
+            retryCount: existing.retryCount,
+            organizationId: session.orgId,
+            idempotent: true
+          });
+        }
+      }
 
-    if (dbWorkflow.status !== 'ACTIVE') {
-      return NextResponse.json(
-        { success: false, error: 'Only active workflows can be retried' },
-        { status: 409 }
-      );
-    }
+      // Verify the workflow belongs to the org
+      const dbWorkflow = await tx.flowWorkflow.findFirst({
+        where: { id: workflowId, organizationId: session.orgId }
+      });
 
-    const externalWorkflowId = dbWorkflow.externalWorkflowId;
-    if (!externalWorkflowId) {
-      return NextResponse.json(
-        { success: false, error: 'Workflow has no external engine mapping; cannot retry' },
-        { status: 400 }
-      );
-    }
-
-    // Verify the execution exists and belongs to this workflow
-    const existingExecution = await prisma.flowExecution.findFirst({
-      where: { id: execId, workflowId: dbWorkflow.id }
-    });
-
-    if (!existingExecution) {
-      return NextResponse.json(
-        { success: false, error: 'Execution not found or does not belong to this workflow' },
-        { status: 404 }
-      );
-    }
-
-    // Only FAILED executions can be retried
-    if (existingExecution.status !== 'FAILED') {
-      return NextResponse.json(
-        { success: false, error: `Cannot retry execution with status ${existingExecution.status}. Only FAILED executions can be retried.` },
-        { status: 409 }
-      );
-    }
-
-    // Check retry limit
-    if (existingExecution.retryCount >= MAX_RETRIES) {
-      return NextResponse.json(
-        {
+      if (!dbWorkflow) {
+        throw new HttpError(404, 'Workflow not found or access denied', {
           success: false,
-          error: `Maximum retry limit (${MAX_RETRIES}) reached for this execution`,
-          retryCount: existingExecution.retryCount
-        },
-        { status: 409 }
-      );
-    }
-
-    // Mark the old execution as superseded (still FAILED, but with retry info)
-    await prisma.flowExecution.update({
-      where: { id: execId },
-      data: {
-        logsJson: JSON.stringify({
-          ...(existingExecution.logsJson ? JSON.parse(existingExecution.logsJson) : {}),
-          supersededBy: 'retry',
-          retriedAt: new Date().toISOString()
-        })
+          error: 'Workflow not found or access denied'
+        });
       }
-    });
 
-    // Create a new execution record for the retry attempt
-    const newExecutionRecord = await prisma.flowExecution.create({
-      data: {
-        workflowId: dbWorkflow.id,
-        status: 'RUNNING',
-        retryCount: existingExecution.retryCount + 1
+      if (dbWorkflow.status !== 'ACTIVE') {
+        throw new HttpError(409, 'Only active workflows can be retried', {
+          success: false,
+          error: 'Only active workflows can be retried'
+        });
       }
-    });
-    const startedAt = Date.now();
-    let execution;
-    try {
-      execution = await flowAdapter.triggerWorkflow(
-        externalWorkflowId,
-        parsedBody.data.payload,
-        parsedBody.data.triggerSource
-      );
-    } catch (error) {
-      await prisma.flowExecution.update({
-        where: { id: newExecutionRecord.id },
+
+      const externalWorkflowId = dbWorkflow.externalWorkflowId;
+      if (!externalWorkflowId) {
+        throw new HttpError(400, 'Workflow has no external engine mapping; cannot retry', {
+          success: false,
+          error: 'Workflow has no external engine mapping; cannot retry'
+        });
+      }
+
+      // Verify the execution exists, belongs to this workflow, and is FAILED
+      const existingExecution = await tx.flowExecution.findFirst({
+        where: { id: execId, workflowId: dbWorkflow.id }
+      });
+
+      if (!existingExecution) {
+        throw new HttpError(404, 'Execution not found or does not belong to this workflow', {
+          success: false,
+          error: 'Execution not found or does not belong to this workflow'
+        });
+      }
+
+      if (existingExecution.status !== 'FAILED') {
+        throw new HttpError(
+          409,
+          `Cannot retry execution with status ${existingExecution.status}. Only FAILED executions can be retried.`,
+          { success: false, error: `Cannot retry execution with status ${existingExecution.status}. Only FAILED executions can be retried.` }
+        );
+      }
+
+      // Check retry limit
+      if (existingExecution.retryCount >= MAX_RETRIES) {
+        throw new HttpError(
+          409,
+          `Maximum retry limit (${MAX_RETRIES}) reached for this execution`,
+          {
+            success: false,
+            error: `Maximum retry limit (${MAX_RETRIES}) reached for this execution`,
+            retryCount: existingExecution.retryCount
+          }
+        );
+      }
+
+      // Mark the old execution as superseded
+      await tx.flowExecution.update({
+        where: { id: execId },
         data: {
-          status: 'FAILED',
-          completedAt: new Date(),
-          logsJson: JSON.stringify({ error: error instanceof Error ? error.message : 'Engine request failed', retryCount: existingExecution.retryCount + 1 })
+          logsJson: JSON.stringify({
+            ...(existingExecution.logsJson ? JSON.parse(existingExecution.logsJson) : {}),
+            supersededBy: 'retry',
+            retriedAt: new Date().toISOString()
+          })
         }
       });
-      return NextResponse.json(
-        {
+
+      // Create a new execution record for the retry attempt
+      const newExecutionRecord = await tx.flowExecution.create({
+        data: {
+          workflowId: dbWorkflow.id,
+          status: 'RUNNING',
+          retryCount: existingExecution.retryCount + 1,
+          logsJson: idempotencyKey ? JSON.stringify({ idempotencyKey }) : undefined
+        }
+      });
+      const startedAt = Date.now();
+      let execution;
+      try {
+        execution = await flowAdapter.triggerWorkflow(
+          externalWorkflowId,
+          parsedBody.data.payload,
+          parsedBody.data.triggerSource
+        );
+      } catch (error) {
+        await tx.flowExecution.update({
+          where: { id: newExecutionRecord.id },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+            logsJson: JSON.stringify({
+              error: error instanceof Error ? error.message : 'Engine request failed',
+              retryCount: existingExecution.retryCount + 1,
+              ...(idempotencyKey ? { idempotencyKey } : {})
+            })
+          }
+        });
+        await recordUsage({
+          organizationId: session.orgId,
+          eventType: 'WORKFLOW_EXECUTION',
+          jobsExecuted: 1,
+          generationMs: Date.now() - startedAt,
+          rawPayload: {
+            workflowId: dbWorkflow.id,
+            externalWorkflowId,
+            executionId: newExecutionRecord.id,
+            triggerSource: parsedBody.data.triggerSource,
+            isRetry: true,
+            retryCount: existingExecution.retryCount + 1,
+            succeeded: false
+          }
+        });
+        throw new HttpError(502, 'Workflow engine execution failed', {
           success: false,
           error: 'Workflow engine execution failed',
           executionId: newExecutionRecord.id,
           retryCount: existingExecution.retryCount + 1
-        },
-        { status: 502 }
-      );
-    }
-
-    await prisma.flowExecution.update({
-      where: { id: newExecutionRecord.id },
-      data: {
-        status: execution.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-        completedAt: new Date(),
-        logsJson: JSON.stringify(execution.output)
+        });
       }
-    });
-    await recordUsage({
-      organizationId: session.orgId,
-      eventType: 'WORKFLOW_EXECUTION',
-      jobsExecuted: 1,
-      generationMs: Date.now() - startedAt,
-      rawPayload: {
-        workflowId: dbWorkflow.id,
-        externalWorkflowId,
+
+      await tx.flowExecution.update({
+        where: { id: newExecutionRecord.id },
+        data: {
+          status: execution.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+          completedAt: new Date(),
+          logsJson: JSON.stringify({
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+            ...(execution.output ? { output: execution.output } : {})
+          })
+        }
+      });
+      await recordUsage({
+        organizationId: session.orgId,
+        eventType: 'WORKFLOW_EXECUTION',
+        jobsExecuted: 1,
+        generationMs: Date.now() - startedAt,
+        rawPayload: {
+          workflowId: dbWorkflow.id,
+          externalWorkflowId,
+          executionId: newExecutionRecord.id,
+          triggerSource: parsedBody.data.triggerSource,
+          isRetry: true,
+          retryCount: existingExecution.retryCount + 1,
+          succeeded: execution.status === 'SUCCESS'
+        }
+      });
+
+      return NextResponse.json({
+        success: true,
+        execution,
         executionId: newExecutionRecord.id,
-        triggerSource: parsedBody.data.triggerSource,
-        isRetry: true,
-        retryCount: existingExecution.retryCount + 1
-      }
-    });
-
-    return NextResponse.json({
-      success: true,
-      execution,
-      executionId: newExecutionRecord.id,
-      retryCount: existingExecution.retryCount + 1,
-      organizationId: session.orgId
+        retryCount: existingExecution.retryCount + 1,
+        organizationId: session.orgId
+      });
     });
   } catch (error: any) {
+    // HttpError thrown inside the transaction carries a pre-built NextResponse-compatible body
+    if (error instanceof HttpError) {
+      return NextResponse.json(error.body, { status: error.status });
+    }
+    if (error instanceof NextResponse) {
+      throw error;
+    }
     if (error instanceof Error && error.message.startsWith('Unauthorized')) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
     if (error instanceof Error && error.message.startsWith('Forbidden')) {
       return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
     if (error instanceof Error && error.message.startsWith('EntitlementDenied')) {
-      return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 403 }
-      );
+      return NextResponse.json({ success: false, error: error.message }, { status: 403 });
     }
 
     return NextResponse.json(

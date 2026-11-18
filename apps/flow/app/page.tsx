@@ -155,9 +155,15 @@ export default function FlowDashboard() {
   const retryExecution = async (log: ExecutionLog) => {
     setRetryingId(log.id);
     try {
+      // Idempotency key: same execution + retry attempt = same key, so duplicate
+      // HTTP retries don't create duplicate execution records.
+      const idempotencyKey = `retry:${log.workflowId}:${log.id}:${log.retryCount + 1}`;
       const res = await fetch(`/api/workflows/${log.workflowId}/executions/${log.id}/retry`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
         body: JSON.stringify({
           payload: log.output,
           triggerSource: 'RETRY_FROM_UI'
