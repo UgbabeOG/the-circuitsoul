@@ -9,6 +9,7 @@
 import { Prisma } from '@prisma/client';
 import { aiService } from '@circuitsoul/ai';
 import { prisma } from '@circuitsoul/db';
+import { createAIGenerationQueue, defaultJobOptions } from './index';
 
 export interface ArticleGenerationInput {
   organizationId: string;
@@ -60,6 +61,30 @@ export async function enqueueArticleGeneration(input: ArticleGenerationInput) {
       retryCount: 0
     }
   });
+
+  // Enqueue to BullMQ for asynchronous processing
+  const queue = createAIGenerationQueue();
+  await queue.add(
+    'blog-article-generation',
+    {
+      idempotencyKey: input.idempotencyKey,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      prompt: `Generate article about: ${input.title} keywords: ${input.keywords.join(', ')}`,
+      generationType: 'BLOG_CONTENT',
+      metadata: { keywords: input.keywords, trendId: input.trendId, generateHeroImage: input.generateHeroImage }
+    },
+    { ...defaultJobOptions, jobId: input.idempotencyKey }
+  );
+
+  // Also process synchronously so the feature works even without a dedicated
+  // BullMQ worker. The worker, when running, will see the job already in
+  // DRAFT state and skip reprocessing.
+  try {
+    await processArticleGenerationJob(input);
+  } catch {
+    // Processing failure is already recorded in the DB by processArticleGenerationJob
+  }
 
   return { jobId: jobRecord.id, articleId: jobRecord.id, duplicate: false };
 }

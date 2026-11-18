@@ -11,6 +11,14 @@ export type { ArticleGenerationInput, CollectedTrendResult };
 export const AI_GENERATION_QUEUE_NAME = 'ai-generation';
 export const AI_GENERATION_DLQ_NAME = 'ai-generation-dlq';
 export const USAGE_AGGREGATION_QUEUE_NAME = 'usage-aggregation';
+export const TREND_COLLECTION_QUEUE_NAME = 'trend-collection';
+export const TREND_COLLECTION_DLQ_NAME = 'trend-collection-dlq';
+
+export type TrendCollectionJobData = {
+  organizationId: string;
+  regionHint?: string;
+  providerNames?: string[];
+};
 
 export type AIGenerationJobData = PayloadFor<'ai-generation.v1'>;
 
@@ -78,6 +86,10 @@ export function createAIGenerationQueue(connection: ConnectionOptions = defaultR
   return createQueue<AIGenerationJobData>(AI_GENERATION_QUEUE_NAME, connection);
 }
 
+export function createTrendCollectionQueue(connection: ConnectionOptions = defaultRedisConnection()) {
+  return createQueue<TrendCollectionJobData>(TREND_COLLECTION_QUEUE_NAME, connection);
+}
+
 export function createUsageAggregationQueue(connection: ConnectionOptions = defaultRedisConnection()) {
   return createQueue<any>(USAGE_AGGREGATION_QUEUE_NAME, connection);
 }
@@ -94,6 +106,8 @@ const defaultJobOptions: JobsOptions = {
   removeOnFail: false
 };
 
+export { defaultJobOptions };
+
 // ─── Enqueue ──────────────────────────────────────────────────────────────────
 
 export async function enqueueAIGenerationJob(
@@ -109,15 +123,17 @@ export async function enqueueAIGenerationJob(
   await queue.add('ai-generation-request', data, { ...defaultJobOptions, ...opts });
 }
 
+export async function enqueueTrendCollection(
+  data: TrendCollectionJobData,
+  connection: ConnectionOptions = defaultRedisConnection(),
+  opts: Partial<JobsOptions> = {}
+) {
+  const queue = createTrendCollectionQueue(connection);
+  await queue.add('trend-collection-request', data, { ...defaultJobOptions, ...opts });
+}
+
 // ─── Worker Factory ───────────────────────────────────────────────────────────
 
-/**
- * Create a BullMQ worker for AI generation jobs with configurable concurrency.
- *
- * @param processor - The job processing callback
- * @param connection - Redis connection options
- * @param config - Worker configuration (concurrency, limiter, etc.)
- */
 export function createAIGenerationWorker(
   processor: (job: Job<AIGenerationJobData>) => Promise<void>,
   connection: ConnectionOptions = defaultRedisConnection(),
@@ -131,9 +147,28 @@ export function createAIGenerationWorker(
     limiter: config.limiter
   };
 
-  // Worker will rely on the processor to handle idempotency and logging.
   return new Worker<AIGenerationJobData>(
     AI_GENERATION_QUEUE_NAME,
+    processor,
+    workerOptions as WorkerOptions
+  );
+}
+
+export function createTrendCollectionWorker(
+  processor: (job: Job<TrendCollectionJobData>) => Promise<void>,
+  connection: ConnectionOptions = defaultRedisConnection(),
+  config: WorkerConfig = {}
+) {
+  const workerOptions: Partial<WorkerOptions> = {
+    connection,
+    concurrency: config.concurrency ?? 3,
+    lockDuration: config.lockDuration,
+    stalledInterval: config.stalledInterval,
+    limiter: config.limiter
+  };
+
+  return new Worker<TrendCollectionJobData>(
+    TREND_COLLECTION_QUEUE_NAME,
     processor,
     workerOptions as WorkerOptions
   );
