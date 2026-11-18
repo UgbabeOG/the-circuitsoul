@@ -61,6 +61,7 @@ interface ExecutionLog {
   durationMs: number;
   triggerSource: string;
   output: Record<string, any>;
+  retryCount: number;
 }
 
 export default function FlowDashboard() {
@@ -70,6 +71,7 @@ export default function FlowDashboard() {
   const [templates, setTemplates] = useState<N8nWorkflowTemplate[]>([]);
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
   const [executingId, setExecutingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
   // Custom builder state
@@ -98,7 +100,10 @@ export default function FlowDashboard() {
         setTemplates(wfRes.templates || []);
       }
       if (logsRes.success) {
-        setLogs(logsRes.executions || []);
+        setLogs((logsRes.executions || []).map((l: any) => ({
+          ...l,
+          retryCount: l.retryCount || 0
+        })));
       }
     } catch (err) {
       console.error('Failed to load Flow data', err);
@@ -144,6 +149,41 @@ export default function FlowDashboard() {
       console.error('Execution failed', err);
     } finally {
       setExecutingId(null);
+    }
+  };
+
+  const retryExecution = async (log: ExecutionLog) => {
+    setRetryingId(log.id);
+    try {
+      const res = await fetch(`/api/workflows/${log.workflowId}/executions/${log.id}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: log.output,
+          triggerSource: 'RETRY_FROM_UI'
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLogs(prev =>
+          prev.map(l =>
+            l.id === log.id
+              ? { ...l, status: 'RUNNING', retryCount: data.retryCount }
+              : l
+          )
+        );
+        setSuccessToast(`Retry #${data.retryCount} started for "${log.workflowName}"`);
+        setTimeout(() => setSuccessToast(null), 5000);
+        // Refresh logs to get updated status
+        setTimeout(fetchInitialData, 2000);
+      } else {
+        setSuccessToast(data.error || 'Retry failed');
+        setTimeout(() => setSuccessToast(null), 5000);
+      }
+    } catch (err) {
+      console.error('Retry failed', err);
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -564,7 +604,18 @@ export default function FlowDashboard() {
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono font-bold text-cyan-400">#{log.id}</span>
                         <span className="text-sm font-bold text-white">{log.workflowName}</span>
-                        <span className="px-2 py-0.5 rounded text-2xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                        {log.retryCount > 0 && (
+                          <span className="px-1 py-0 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Retry #{log.retryCount}
+                          </span>
+                        )}
+                        <span className={`px-2 py-0.5 rounded text-2xs font-semibold ${
+                          log.status === 'SUCCESS'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : log.status === 'FAILED'
+                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        } flex items-center gap-1`}>
                           <CheckCircle2 className="w-3 h-3" /> {log.status}
                         </span>
                       </div>
@@ -574,6 +625,20 @@ export default function FlowDashboard() {
                         <span>{new Date(log.startedAt).toLocaleString()}</span>
                       </div>
                     </div>
+
+                    {log.status === 'FAILED' && (
+                      <div className="mt-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={retryingId === log.id}
+                          onClick={() => retryExecution(log)}
+                          className="text-xs text-rose-400 hover:bg-rose-500/10"
+                        >
+                          {retryingId === log.id ? 'Retrying...' : 'Retry Failed Execution'}
+                        </Button>
+                      </div>
+                    )}
 
                     <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs text-slate-300 font-mono overflow-x-auto max-h-48">
                       <pre className="text-2xs text-slate-300 leading-relaxed">
