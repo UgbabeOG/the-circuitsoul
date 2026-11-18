@@ -21,6 +21,8 @@ export const mockPrometheus = {
     // Simulate realistic usage values that vary slightly
     const randomCpu = Math.floor(Math.random() * 30) + 15; // 15% - 45%
     const randomMem = Math.floor(Math.random() * 20) + 50; // 50% - 70%
+
+    // Mock always returns complete 'demo' metrics; real integrations may return 'partial'.
     return {
       state: "demo",
       cpu: randomCpu,

@@ -36,8 +36,19 @@ export class PrometheusAdapter {
     };
     const cpu = parseValue(cpuResult);
     const memory = parseValue(memResult);
+
+    // Distinguish complete live metrics from partial metrics.
+    // 'live' requires both CPU and memory; 'partial' means only one is available.
+    let state: 'live' | 'partial' | 'unavailable';
+    if (cpu !== null && memory !== null) {
+      state = 'live';
+    } else if (cpu !== null || memory !== null) {
+      state = 'partial';
+    } else {
+      state = 'unavailable';
+    }
     return {
-      state: cpu === null && memory === null ? 'unavailable' as const : 'live' as const,
+      state,
       cpu,
       memory,
       timestamp: new Date().toISOString()

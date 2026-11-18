@@ -12,7 +12,7 @@ type CloudEnvironment = {
 };
 
 type ResourceMetrics = {
-  state: 'live' | 'demo' | 'unavailable';
+  state: 'live' | 'partial' | 'demo' | 'unavailable';
   cpu: number | null;
   memory: number | null;
   timestamp: string | null;
@@ -157,7 +157,7 @@ export default function CloudOpsDashboard() {
               <span className="font-semibold">{selectedEnvironment.name}</span>
               <span>{selectedEnvironment.provider}</span>
               <span className="text-slate-500">Configured status: {selectedEnvironment.status}</span>
-              <span className={`uppercase text-xs font-bold ${metrics?.state === 'live' ? 'text-emerald-400' : metrics?.state === 'demo' ? 'text-amber-300' : 'text-slate-400'}`}>
+              <span className={`uppercase text-xs font-bold ${metrics?.state === 'live' ? 'text-emerald-400' : metrics?.state === 'partial' ? 'text-amber-400' : metrics?.state === 'demo' ? 'text-amber-300' : 'text-slate-400'}`}>
                 Metrics: {loading ? 'loading' : metrics?.state || 'unavailable'}
               </span>
               {metrics?.timestamp && <span className="text-xs text-slate-500">Observed {new Date(metrics.timestamp).toLocaleString()}</span>}
@@ -175,6 +175,15 @@ export default function CloudOpsDashboard() {
         <Card>
           <h2 className="text-lg font-bold text-white mb-2">Service health</h2>
           <p className="text-sm text-slate-400">Unavailable: this integration does not currently collect service health checks, uptime, or SLA evidence.</p>
+        </Card>
+
+        <Card>
+          <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-400" /> Cost Monitoring
+          </h2>
+          <p className="text-slate-400 text-xs">
+            Cost monitoring is not yet operational. Real cloud billing data has not been integrated. Do not interpret resource metrics as cost data.
+          </p>
         </Card>
 
         <Card>

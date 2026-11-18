@@ -19,9 +19,15 @@ export async function GET(request: Request) {
       );
     }
 
-    // Bind host/environment ID to an org-owned CloudEnvironment record
+    // Bind host/environment ID to an org-owned CloudEnvironment record.
+    // The Prometheus instance label is stored separately and is NOT assumed
+    // to equal the environment UUID.
     const environment = await prisma.cloudEnvironment.findFirst({
-      where: { id: hostId, organizationId: session.orgId }
+      where: { id: hostId, organizationId: session.orgId },
+      select: {
+        id: true,
+        prometheusInstanceLabel: true
+      }
     });
 
     if (!environment) {
@@ -33,13 +39,29 @@ export async function GET(request: Request) {
 
     let data: Awaited<ReturnType<typeof opsAdapter.getResourceMetrics>>;
     try {
-      data = await opsAdapter.getResourceMetrics(environment.id);
+      // Use the stored Prometheus instance label, falling back to the env UUID
+      // only when no label has been configured (backward compatibility).
+      data = await opsAdapter.getResourceMetrics(
+        environment.prometheusInstanceLabel ?? hostId
+      );
     } catch {
       return NextResponse.json({
         success: true,
         data: { state: 'unavailable', cpu: null, memory: null, timestamp: null },
         organizationId: session.orgId,
         environmentId: environment.id
+      });
+    }
+
+    // Persist the metric sample for historical reporting.
+    if (data.state !== 'unavailable') {
+      await prisma.cloudMetric.create({
+        data: {
+          environmentId: environment.id,
+          cpuUtilization: data.cpu ?? 0,
+          memoryUtilization: data.memory ?? 0,
+          costDaily: null
+        }
       });
     }
 
